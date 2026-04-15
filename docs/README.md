@@ -84,6 +84,7 @@ the project, read them in sequence.
 | 15 | [glossary.md](15-glossary.md) | Terms, acronyms, external references |
 | 16 | [debugging.md](16-debugging.md) | Debug cookbook: symptom → diagnosis → fix |
 | 17 | [portability.md](17-portability.md) | What transfers to other cams in the OEM family |
+| 18 | [aiseebling-investigation.md](18-aiseebling-investigation.md) | OSINT money-trail: identifying the entity behind `payment.aiseebling.com` |
 | — | [ERRATA.md](ERRATA.md) | Log of corrections and claim updates |
 
 ## How to update

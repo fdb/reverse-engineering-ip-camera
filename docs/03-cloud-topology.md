@@ -80,7 +80,7 @@ IP-level traffic. We have to catch it with a dedicated `iptables -d
 | `databuried.cloudbirds.cn` | resolves at runtime | unknown | app analytics / telemetry (`URLConfig.databuried`) — obtained via `/domainname/all` decryption, not yet observed on the wire | — |
 | `support.cloudbirds.cn` | resolves at runtime | unknown | app support pages (`URLConfig.support`, HTTPS) **and** account cancellation (`URLConfig.cancellation`, plain **HTTP** — see anomaly note below) | — |
 | `privacy-policy.dayunlinks.cn` | resolves at runtime | unknown | app privacy policy page (`URLConfig.privacy`) | — |
-| **`payment.aiseebling.com`** ⚠️ | resolves at runtime | **unknown — third OEM brand surfaced** | app payment (`URLConfig.pay`) — **only place the `aiseebling.com` domain appears in the entire stack; worth chasing in a future session** | — |
+| **`payment.aiseebling.com`** | `189.1.221.131` (Huawei Cloud HK) | **Qianniao OEM shared white-label payment endpoint** | app payment (`URLConfig.pay`) — see [`18-aiseebling-investigation.md`](18-aiseebling-investigation.md) | — |
 
 **Anomaly — the `cancellation` URL is plain `http://`, not `https://`.**
 The decrypted `URLConfig.cancellation` field literally starts with
@@ -165,10 +165,20 @@ from the earlier sessions plus one surfaced by decrypting
    (`apppush-hapseemate.dayunlinks.cn`), and privacy policy
    (`privacy-policy.dayunlinks.cn`). This is the company name behind
    Cloudbirds.
-4. **`aiseebling.com`** — used **only** for payment
-   (`payment.aiseebling.com`). New in Session 6; not seen elsewhere in
-   the stack. The "aiseebling" branding suggests an AI/IoT sub-brand
-   or a separate OEM partner.
+4. **`aiseebling.com`** — used for payment
+   (`payment.aiseebling.com`) and an iOS Universal Link anchor
+   (`universallink.aiseebling.com`). Session 7 OSINT traced it back
+   to the **same Qianniao OEM cluster** that publishes the V360 Pro
+   app: the homepage HTML is a white-label SPA whose commented-out
+   `<title>` tags enumerate every sibling brand, including
+   `深圳市千鸟祥云技术有限公司` ("Shenzhen Qianniao Xiangyun
+   Technology Co., Ltd."), which Google Play Store independently
+   lists as the developer of `com.dayunlinks.cloudbirds`. The
+   currently-active brand on the domain is `安芯看看` ("AnXin
+   KanKan" / Shenzhen Anxinkankan IoT Technology Co., Ltd.),
+   hosted on Tencent Cloud Beijing (apex) + Huawei Cloud HK
+   (payment). Registered 2025-07-11 via DNSPod.
+   See [`18-aiseebling-investigation.md`](18-aiseebling-investigation.md).
 
 Additionally, `public.dayunlinks.cn` CNAMEs through
 `birds-public.philipsiot.com` to Signify / Philips IoT infrastructure
@@ -212,7 +222,7 @@ See [`08-attack-chain.md`](08-attack-chain.md) for the full routing
 details and [`09-router-setup.md`](09-router-setup.md) for how to actually
 configure it.
 
-_Last updated: 2026-04-15 — Session 6_
+_Last updated: 2026-04-15 — Session 7_
 
 ## Public IP leakage (important OPSEC note)
 

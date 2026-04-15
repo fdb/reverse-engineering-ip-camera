@@ -1,4 +1,4 @@
-_Last updated: 2026-04-15 — Session 6_
+_Last updated: 2026-04-15 — Session 7_
 
 # 12 · Session log
 
@@ -381,6 +381,76 @@ non-obvious you figured out. Think of it as the project&rsquo;s changelog.
   - `4051a21` OTA discovery scaffolding + findings (Wave 2)
   - `06c7fc2` ERR-010 dnsmasq path + restart method (Wave 3 mid-run)
   - (this session&rsquo;s Wave 3 findings pending one more commit)
+
+## 2026-04-15 — Session 7: Aiseebling.com money-trail OSINT
+
+- **Goal of the session**: follow up on the Session 6 loose end —
+  `URLConfig.pay → https://payment.aiseebling.com`, the one URL
+  from the decrypted `/domainname/all` dictionary that didn&rsquo;t
+  match any known brand cluster. Spec lives at
+  `docs/superpowers/specs/2026-04-15-aiseebling-money-trail-design.md`.
+  Passive OSINT only; no active probing, no forms, no payment
+  activity.
+- **Headline verdict**: `aiseebling.com` is **operated by the same
+  Qianniao OEM cluster that publishes the V360 Pro app itself**. It
+  is not a third-party payment partner and not a separate OEM. It is
+  the OEM&rsquo;s own shared white-label payment / deep-link endpoint.
+  Full writeup in [`18-aiseebling-investigation.md`](18-aiseebling-investigation.md).
+- **Key finding — the homepage is a self-disclosing multi-brand
+  shell.** `https://aiseebling.com/` serves a Vue/React/Vite SPA
+  whose `<head>` contains the currently-active brand&rsquo;s
+  `<title>` and `<link rel="icon">`, plus **seven commented-out
+  sibling `<title>` tags naming parallel legal entities** and
+  eight commented-out sibling brand logos. The first line of the
+  file is literally `<!-- 千鸟物联logo 、dayunlinks -->`, naming
+  the Dayunlinks brand in plain ASCII. The currently-active brand
+  is `深圳市安芯看看物联科技有限公司` (Shenzhen Anxinkankan IoT
+  Technology Co., Ltd.).
+- **Key finding — Play Store disclosure nails the entity.** Google
+  Play&rsquo;s mandatory developer disclosure for
+  `com.dayunlinks.cloudbirds` names "Shenzhen Qianniao Xiangyun
+  Technology Co., Ltd., No. 42 Longcheng Street, Longgang District,
+  Shenzhen" — which is an exact English translation of
+  `深圳市千鸟祥云技术有限公司`, one of the commented entities on
+  the aiseebling homepage. Two independent sources, same entity.
+  The `com.qianniao.*` Java package root from earlier sessions is
+  now pinned to a real registered company.
+- **Key finding — domain is brand-new and Tencent-stacked.**
+  Registered 2025-07-11 via DNSPod (Tencent subsidiary; registrant
+  country CN, privacy-shielded). Apex on Tencent Cloud Beijing
+  (`43.139.108.230`, AS45090). `payment.aiseebling.com` on Huawei
+  Cloud HK ELB (`189.1.221.131`). `universallink.aiseebling.com` on
+  Huawei Cloud Shenzhen. Tencent-run MX (`mxbiz1.qq.com`) and SPF.
+  The ~9-month age plus zero Wayback snapshots plus zero indexed
+  web references confirms it&rsquo;s a fresh operator-controlled
+  endpoint, not a legacy brand.
+- **Supply-chain implication**: the Qianniao OEM runs at least
+  **nine sibling brand faces** out of the same Shenzhen-Longgang
+  codebase — `千鸟物联`, `云看看`, `安芯看看`, `欣视安`, `飞利浦`
+  (Philips!), `千鸟智云`, `开心看Pro` / HapSee, `smaint`,
+  `intellicared`. All share the same `aiseebling.com` payment
+  endpoint. The Philips-branded build option is particularly
+  notable given Session 6&rsquo;s finding that `public.dayunlinks.cn`
+  CNAMEs through `birds-public.philipsiot.com` — Signify/Philips
+  sits in the OEM&rsquo;s reseller roster, not just as accidental
+  upstream infrastructure.
+- **Blockers hit**: QCC (企查查) company-detail page behind Alibaba
+  WAF with JS challenge — spec stop condition, documented. USPTO
+  TESS, WIPO Brand DB, and CNIPA all JS-rendered SPAs that plain
+  WebFetch cannot drive — tooling gap. GitHub code search gated
+  behind sign-in. Wayback Machine API returns zero snapshots for
+  either host (itself a finding). Apple App Store 404 on the V360
+  Pro product URL — app appears de-listed from US store.
+- **Artifacts produced**: one new doc
+  [`18-aiseebling-investigation.md`](18-aiseebling-investigation.md),
+  cross-reference updates to `03-cloud-topology.md` and `README.md`,
+  this session-log entry. No scripts, no code, no captures.
+- **Status at end**: primary goal achieved. Success criteria
+  satisfied on legal-entity identification, country, and
+  brand-cluster cross-reference (spec §6). MITM pipeline and
+  router state untouched (the investigation was 100% off-cam).
+  `aiseebling.com` is now fully demystified and can be treated as
+  "Qianniao OEM shared payment endpoint" in all future references.
 
 ## Template for new session entries
 
