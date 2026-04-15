@@ -113,7 +113,7 @@ internet ──┐                               ┌── real Kalay supernodes
 ### 🔜 Next move
 
 **Run a minimal fake client against the real supernode** (see
-[`13-next-steps.md`](13-next-steps.md)). The idea: instead of crafting
+[`14-next-steps.md`](14-next-steps.md)). The idea: instead of crafting
 fake packets to inject into the cam&rsquo;s session, we ask the real
 supernode to do the work for us. We impersonate an "app" that wants to
 connect to the cam, send a legitimate `P2P_REQ` to the supernode, and
@@ -151,7 +151,7 @@ observation unlocks the entire supernode→cam protocol.
 ## Where everything lives
 
 For the canonical inventory of scripts, flags, and log locations, see
-[`10-tooling.md`](10-tooling.md). In broad strokes:
+[`11-tooling.md`](11-tooling.md). In broad strokes:
 
 - **Scripts** — `wifiqr.py`, `probe.py`, `mitm_*.py`, `fake_*.py`,
   `inject_p2p_req.py`, `build_docs.py`
@@ -164,4 +164,4 @@ For the canonical inventory of scripts, flags, and log locations, see
 - **Generated site** — `dist/` (gitignored; rebuild via
   `python3 build_docs.py`)
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_

@@ -107,7 +107,7 @@ an HMAC-SHA256 key with some framing.
 There&rsquo;s almost certainly a helper function in `libPPCS_API.so`
 (probably `cs2p2p_PPPP_DecodeString`, despite its misleading name)
 that converts the A-P alphabet back into raw bytes. We haven&rsquo;t
-disassembled it yet — see `12-open-questions.md`.
+disassembled it yet — see `13-open-questions.md`.
 
 These keys are passed to `PPCS_Initialize` as a byte array plus a NUL
 terminator. Internally the library uses the decoded bytes as:
@@ -142,7 +142,7 @@ ffmpeg), Chinese ad SDKs (pangle, mbridge, tradplus, inmobi), or
 measurement SDKs (apminsight, applovin). None of that is relevant to
 the protocol.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_
 
 ## What we have NOT done
 

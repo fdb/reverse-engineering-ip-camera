@@ -1,6 +1,6 @@
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_
 
-# 11 · Session log
+# 12 · Session log
 
 Chronological record of what we learned and when. Update this file
 at the end of every session with bullet points for anything
@@ -185,15 +185,15 @@ non-obvious you figured out. Think of it as the project&rsquo;s changelog.
 - **Added the first real hex dump** of a captured `0xF9
   REPORT_SESSION_RDY` body to the wire-format doc, for future
   obfuscation-reversal work.
-- **Added `docs/15-debugging.md`** — debug cookbook covering common
+- **Added `docs/16-debugging.md`** — debug cookbook covering common
   pipeline failure modes with symptoms, diagnosis commands, and
   fixes.
-- **Added `docs/16-portability.md`** — what&rsquo;s reusable for other
+- **Added `docs/17-portability.md`** — what&rsquo;s reusable for other
   Kalay/CS2 cams vs. what&rsquo;s cam-specific.
 - **Added `docs/ERRATA.md`** — tracks corrections and "we used to
   say X, now we say Y" updates.
 - **Deleted `NEXT_STEPS.md`** at the project root — content was a
-  near-duplicate of `docs/13-next-steps.md`, replaced with a stub
+  near-duplicate of `docs/14-next-steps.md`, replaced with a stub
   pointing at the canonical copy.
 - **Built and tested the site** with Playwright MCP. Screenshots
   verified: dark mode loads by default, toggle works, sidebar
@@ -201,7 +201,94 @@ non-obvious you figured out. Think of it as the project&rsquo;s changelog.
   is readable at the stated max content width.
 - **Status at end**: docs/ is a clean, consistent, reviewed
   reference. Fakie-client approach is still the recommended next
-  technical step — documented fully in `docs/13-next-steps.md`.
+  technical step — documented fully in `docs/14-next-steps.md`.
+
+## 2026-04-15 — Session 6: OTA discovery pivot + router-state restoration
+
+- **Goal of the session**: pivot from the stalled Kalay fake-client
+  path to investigating the firmware OTA update flow. Capture the
+  app-side OTA version check to identify the update endpoint and
+  (if possible) the firmware binary.
+- **Pre-work finding — MITM pipeline was silently broken**: `dig`
+  preflight showed `user.hapseemate.cn`, `p2p5.cloudbirds.cn` and
+  `public.dayunlinks.cn` all resolving to real cloud IPs, not the
+  sink. Root cause: the Unifi controller regenerates
+  `/run/dnsmasq.dns.conf.d/*.conf` on every settings-apply, which
+  wiped the Session 5 `address=` overrides. The `iptables` counters
+  still showed thousands of healthy-looking packets — these were
+  **stale** from before the override was lost. Classic "stale
+  evidence masquerading as success." Documented in `ERRATA.md`
+  entry ERR-009.
+- **Key finding: V360 Pro app ships with allow-all TLS trust.** Static
+  analysis of `decompiled/sources/com/qianniao/base/http/HttpClient.java:71-105`
+  found a custom `X509TrustManager` with an empty `checkServerTrusted()`
+  method plus a `HostnameVerifier` that returns `true` unconditionally.
+  No `networkSecurityConfig`, no `CertificatePinner`, no root/Frida
+  detection. Every HTTPS call the app makes is trivially MITM-able.
+  This simplifies Wave 3 emulator setup dramatically — no CA push
+  needed, no `-writable-system` image, no Frida hooks. Documented in
+  `07-defenses.md`.
+- **Key finding: OTA backend is Philips IoT, not Chinese cloud.**
+  `public.dayunlinks.cn` CNAMEs through `birds-public.philipsiot.com`
+  to `190.92.254.74` — Signify-operated infrastructure. Worth
+  flagging for OEM-family portability work. Documented in
+  `03-cloud-topology.md`.
+- **Identified OTA endpoints** (static analysis, not yet captured
+  live): `GET https://public.dayunlinks.cn/public/checkDevVer` and
+  `GET https://public.dayunlinks.cn/public/checkVer`. Also discovered
+  additional app-side hosts: `birds-user.hapseemate.cn`,
+  `wechat.hapseemate.cn`, `ai-voice.cloudbirds.cn`,
+  `apppush-hapseemate.dayunlinks.cn`.
+- **Doc restructure**: old `docs/09-mitm-setup.md` was conflating
+  two independent concerns (router-side config and Mac-side proxy
+  ops) AND had the wrong dnsmasq path (`/run/dnsmasq.conf.d/` →
+  should have been `/run/dnsmasq.dns.conf.d/`). Replaced with:
+  - `docs/09-router-setup.md` — script-shaped, ephemeral, four
+    phases (Preflight / Apply / Verify / Optional br4 egress block /
+    Teardown) with comment-marker pattern (`-m comment "camre"`)
+    for surgical rule removal.
+  - `docs/10-mitm-mac-side.md` — clean standalone reference for
+    the Python proxies on the Mac.
+  - Everything from old slot 10 through old slot 16 shifted up
+    by one to slots 11–17. See ERRATA entry ERR-009 for the full
+    rename map.
+- **Sink IP switched** from `9.9.9.9` (real Quad9) to `203.0.113.37`
+  (TEST-NET-3, RFC 5737). Lower OPSEC footprint: a DNAT miss drops
+  the packet instead of leaking to Quad9&rsquo;s logs. Already
+  known-good per pre-existing test in (then) `12-open-questions.md`.
+- **MITM proxy upgraded for multi-cloud**: `mitm_cbs_proxy.py` now
+  SNI-dispatches against an allowlist
+  (`{hapseemate.cn, cloudbirds.cn, dayunlinks.cn, philipsiot.com}`)
+  and resolves upstream IPs live via a hand-rolled DNS stub pointing
+  at `1.1.1.1:53` (so it doesn&rsquo;t go through the Mac&rsquo;s system
+  resolver, which is sinkholing those hostnames). Each completed
+  exchange is dumped as JSON to
+  `captures/ota/<ISO-timestamp>/<NNNN>-{request,response}.json` for
+  structured querying. Cert SAN list extended on
+  `fake_cbs_server.py` to cover dayunlinks and philipsiot domains.
+- **Preflight rule added to `CLAUDE.md`**: `dig` is the source of
+  truth for MITM pipeline health, not packet counters. Every
+  session must start by running Phase 0 of `09-router-setup.md`
+  before any other work. Prevents the Session 5 → Session 6
+  silent-break scenario from recurring.
+- **Design spec**: `docs/superpowers/specs/2026-04-15-ota-discovery-design.md`
+  documents the whole pivot (five blocks), with explicit stop
+  conditions for Wave 3 and a firm "no flashing firmware this
+  session" rule.
+- **Blockers hit**: none unresolved. Wave 3 (emulator OTA trigger +
+  capture) is pending interactive execution by Frederik.
+- **Artifacts produced**: `docs/09-router-setup.md`,
+  `docs/10-mitm-mac-side.md`, renumber cascade of 10→17,
+  `docs/superpowers/specs/2026-04-15-ota-discovery-design.md`,
+  modified `mitm_cbs_proxy.py` (SNI dispatch + stub resolver +
+  structured capture), modified `fake_cbs_server.py` (SAN list),
+  preflight rule in `CLAUDE.md`, updates to
+  `03-cloud-topology.md` / `07-defenses.md` / `13-open-questions.md`.
+- **Status at end**: router-state restoration script written but
+  not yet executed on the live UDM (pending Frederik). Emulator
+  tooling not yet installed (`brew install --cask android-commandlinetools`
+  pending). Spec and supporting scaffolding is ready; Wave 3 is
+  a ~20-minute interactive run once someone is at the keyboard.
 
 ## Template for new session entries
 

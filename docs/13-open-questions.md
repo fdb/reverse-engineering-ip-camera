@@ -1,4 +1,4 @@
-# 12 · Open questions
+# 13 · Open questions
 
 Everything we don&rsquo;t know yet, ordered roughly by priority. When
 something here is resolved, move the finding into the appropriate
@@ -62,7 +62,7 @@ minimal Python client that speaks the app-side protocol to the real
 supernode, asking for our cam&rsquo;s DID. The real supernode then sends
 the correct notification to the cam through our MITM pipe, and we
 observe it in cleartext in `/tmp/cam-listen/mitm_supernode.log`. See
-[`13-next-steps.md`](13-next-steps.md).
+[`14-next-steps.md`](14-next-steps.md).
 
 **Alternative plan**: run the vendor Android app in an isolated
 emulator for 5 seconds against this cam, capture the traffic, observe
@@ -142,14 +142,30 @@ live streaming request.
 
 ### What&rsquo;s the OTA update endpoint?
 
-**Priority: medium, long-term.** If we can identify and intercept
-firmware updates, we potentially have a code-injection path. The
-Android app&rsquo;s `Api.java` references `public.dayunlinks.cn/public/checkDevVer`
-and `public.dayunlinks.cn/public/checkVer` — those might be the same
-endpoint the cam calls.
+**Priority: medium, long-term.** Status: **partially answered in
+Session 6.** Static analysis of `decompiled/sources/com/qianniao/base/http/HttpClient.java`
+confirmed the app calls two endpoints for firmware version checks:
 
-**Plan**: trigger an OTA update from the vendor app (with the real
-cloud path temporarily unblocked), capture the full flow, document.
+- `https://public.dayunlinks.cn/public/checkDevVer`
+- `https://public.dayunlinks.cn/public/checkVer`
+
+Also discovered: `public.dayunlinks.cn` CNAMEs to
+`birds-public.philipsiot.com` → `190.92.254.74`. So the OTA backend
+is hosted on Philips Signify IoT infrastructure, not on Alibaba
+with the rest of the Chinese cloud stack. See `03-cloud-topology.md`
+for the full host map.
+
+**Still unknown**:
+- The exact request body / query-string format (payload, HMAC, nonce).
+- The response schema (URL field, signature field, version compare rules).
+- Whether the cam itself hits these endpoints, or only the app — it&rsquo;s
+  possible the app checks for updates and then pushes a command to
+  the cam via Kalay to download over a different channel.
+- Whether the firmware binary is signed. (See next question.)
+
+**Plan**: Session 6 Wave 3 captures the app-side version-check flow
+via emulator-driven MITM, per
+`docs/superpowers/specs/2026-04-15-ota-discovery-design.md`.
 
 ### Does the cam verify signature on OTA firmware?
 
@@ -287,4 +303,4 @@ from it instead of writing a fake client from scratch.
 **Plan**: search GitHub for "PPCS_Initialize", "Throughtek Kalay",
 "CS2 PPPP" Python implementations.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_

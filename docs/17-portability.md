@@ -1,4 +1,4 @@
-# 16 · Portability to other cams
+# 17 · Portability to other cams
 
 Most of what&rsquo;s in this project applies, with varying degrees of
 adaptation, to the wider family of Chinese IP cameras that ship on
@@ -190,4 +190,4 @@ order and stop at the first failure:
 7. **Adapt `mitm_supernode_proxy.py`&rsquo;s upstream list** to point at
    the target OEM&rsquo;s real supernodes.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_

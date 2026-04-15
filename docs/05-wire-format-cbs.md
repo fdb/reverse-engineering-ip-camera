@@ -130,7 +130,7 @@ don&rsquo;t know whether the typo itself is required, or whether it&rsquo;s the
 `status:"200"` field, or something else in the exact byte sequence.
 For safety, canned responses should reproduce the real cloud output
 **verbatim** including `"mssage"`. Testing the corrected spelling is a
-low-effort open question — see [`12-open-questions.md`](12-open-questions.md).
+low-effort open question — see [`13-open-questions.md`](13-open-questions.md).
 
 ### What the cam does with the response
 
@@ -183,7 +183,7 @@ From symbol analysis of `libCBSClient.so` and the Android app&rsquo;s
 None of the above have been captured yet. Once we trigger them, add
 a section here with the exact schemas.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_
 
 ## CBSClient log strings (for reference)
 

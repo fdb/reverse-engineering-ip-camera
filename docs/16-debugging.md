@@ -1,4 +1,4 @@
-# 15 · Debug cookbook
+# 16 · Debug cookbook
 
 A flat list of symptoms that have actually bitten us, the diagnosis
 command that identifies the cause, and the fix. Use this as a lookup
@@ -120,7 +120,7 @@ Several possible causes — work through them in order:
    layouts. For types we&rsquo;ve disassembled (`PunchPkt`, `P2PReq`,
    `PunchTo`) use the exact layouts from the reference doc. For
    types we haven&rsquo;t, capture a real packet first (see Fake Client
-   approach in [`13-next-steps.md`](13-next-steps.md)).
+   approach in [`14-next-steps.md`](14-next-steps.md)).
 
 4. **conntrack entry for that cam session has expired**. UDP
    conntrack default timeout is ~180 seconds. If the cam was quiet
@@ -277,4 +277,4 @@ open explainer-deep.html
 
 They&rsquo;re not part of the `dist/` build output.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_

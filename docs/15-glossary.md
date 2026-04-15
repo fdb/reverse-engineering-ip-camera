@@ -1,4 +1,4 @@
-# 14 · Glossary and references
+# 15 · Glossary and references
 
 Every acronym, brand name, symbol, and concept used throughout the
 documentation. Reference material only — you don&rsquo;t need to read
@@ -56,7 +56,7 @@ this linearly.
 | **Injection file** | `/tmp/cam-listen/inject.json` — the JSON blob read by the SIGUSR1 hook. Contains a list of `{target, hex}` entries. |
 | **Fake supernode** | `fake_supernode.py`, the original canned-responder before we pivoted to MITM. Superseded but kept in tree. |
 | **Fake CBS** | `fake_cbs_server.py`, the original canned TLS server. Superseded. |
-| **Fake client** | Term for the upcoming "speak app-side Kalay to the real supernode" approach. Doesn&rsquo;t exist yet as of 2026-04-15. See [`13-next-steps.md`](13-next-steps.md). |
+| **Fake client** | Term for the upcoming "speak app-side Kalay to the real supernode" approach. Doesn&rsquo;t exist yet as of 2026-04-15. See [`14-next-steps.md`](14-next-steps.md). |
 | **WAITING state** | The cam&rsquo;s post-registration idle state. 30-second DEV_LGN keepalive, no other activity. The state we want to break out of. |
 | **Airgap mode** | The target final deployment state where the cam never reaches any real cloud. All responses served from a local canned bank. |
 
@@ -116,7 +116,7 @@ this linearly.
   `brew install ghidra`. Headless mode is under
   `/opt/homebrew/Cellar/ghidra/*/libexec/support/analyzeHeadless`.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_
 
 ## Common acronyms
 

@@ -11,6 +11,42 @@ wrong. Tracking those corrections here prevents the same issue from
 being re-introduced and gives future readers a sense of which parts
 of the docs are battle-tested vs. recently rewritten.
 
+## 2026-04-15 — Session 6 renumber cascade
+
+Structural change to the docs tree, not a content correction, but
+recorded here so future readers can trace the slot shift.
+
+### ERR-009: `09-mitm-setup.md` split into router-side and Mac-side
+
+- **Files**: `docs/09-mitm-setup.md` → split into
+  `docs/09-router-setup.md` (router/UDM dnsmasq + iptables) and
+  `docs/10-mitm-mac-side.md` (Mac-side proxy start/stop/verify).
+  Every file from old slot 10 through old slot 16 shifted up by
+  one slot:
+  - `10-tooling.md` → `11-tooling.md`
+  - `11-session-log.md` → `12-session-log.md`
+  - `12-open-questions.md` → `13-open-questions.md`
+  - `13-next-steps.md` → `14-next-steps.md`
+  - `14-glossary.md` → `15-glossary.md`
+  - `15-debugging.md` → `16-debugging.md`
+  - `16-portability.md` → `17-portability.md`
+- **Was**: one combined `09-mitm-setup.md` covering both router
+  configuration (dnsmasq overrides, iptables DNAT) and Mac-side
+  proxy operation in a single document.
+- **Now**: two files with independent concerns. `docs/README.md`
+  index and all cross-references in body text updated to match.
+- **Why**: the combined file conflated two independent concerns
+  that fail in different ways and are edited on different cadences.
+  The Session 6 preflight also revealed the router-side half had
+  a wrong dnsmasq path (`/run/dnsmasq.conf.d/` — should have been
+  `/run/dnsmasq.dns.conf.d/`), and the Unifi controller silently
+  regenerates that directory on every settings apply. Fixing that
+  inline without a rewrite would have left a document whose shape
+  (prose walkthrough) no longer matched its function (ephemeral,
+  script-shaped, re-run-after-every-apply). A full split and
+  rewrite of the router side was warranted; separating the Mac
+  side fell out for free.
+
 ## 2026-04-15 — Session 5 review pass
 
 Self-review pass on the initial docs dump. No external reviewer yet.
@@ -139,4 +175,4 @@ skeptical eye after writing them.
 - **Why**: what new information or realization caused the correction
 ```
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_

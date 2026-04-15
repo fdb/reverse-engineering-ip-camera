@@ -1,4 +1,4 @@
-# 13 · Next steps
+# 14 · Next steps
 
 Concrete ordered plan for the next session(s). Each step includes
 the "why", the specific commands / code, and the expected outcome
@@ -53,7 +53,7 @@ ssh root@192.168.5.1 'iptables -t nat -L PREROUTING -v -n --line-numbers'
 ping -c 2 192.168.5.37
 ```
 
-If any piece is missing, see [`09-mitm-setup.md`](09-mitm-setup.md)
+If any piece is missing, see [`09-router-setup.md`](09-router-setup.md)
 for how to restore it.
 
 ## Step 2 — Fake client approach (primary path)
@@ -292,4 +292,4 @@ Rough estimates for a focused session:
 Most of that is in step 2 (getting the first capture) and step 3
 (understanding DRW). Steps 0, 1 and 4 are relatively mechanical.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_

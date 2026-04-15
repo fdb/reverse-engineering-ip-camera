@@ -75,14 +75,15 @@ the project, read them in sequence.
 | 06 | [state-machine.md](06-state-machine.md) | Cam lifecycle from boot to idle |
 | 07 | [defenses.md](07-defenses.md) | Vendor security features and what we break |
 | 08 | [attack-chain.md](08-attack-chain.md) | Full interception architecture |
-| 09 | [mitm-setup.md](09-mitm-setup.md) | How to configure and run the MITM |
-| 10 | [tooling.md](10-tooling.md) | Every script, flag, and log location |
-| 11 | [session-log.md](11-session-log.md) | Chronological RE progress |
-| 12 | [open-questions.md](12-open-questions.md) | Known unknowns, ordered by priority |
-| 13 | [next-steps.md](13-next-steps.md) | Concrete actions to take next |
-| 14 | [glossary.md](14-glossary.md) | Terms, acronyms, external references |
-| 15 | [debugging.md](15-debugging.md) | Debug cookbook: symptom → diagnosis → fix |
-| 16 | [portability.md](16-portability.md) | What transfers to other cams in the OEM family |
+| 09 | [router-setup.md](09-router-setup.md) | UDM dnsmasq + iptables, ephemeral script-shaped setup |
+| 10 | [mitm-mac-side.md](10-mitm-mac-side.md) | Starting, verifying, and stopping the Mac-side MITM proxies |
+| 11 | [tooling.md](11-tooling.md) | Every script, flag, and log location |
+| 12 | [session-log.md](12-session-log.md) | Chronological RE progress |
+| 13 | [open-questions.md](13-open-questions.md) | Known unknowns, ordered by priority |
+| 14 | [next-steps.md](14-next-steps.md) | Concrete actions to take next |
+| 15 | [glossary.md](15-glossary.md) | Terms, acronyms, external references |
+| 16 | [debugging.md](16-debugging.md) | Debug cookbook: symptom → diagnosis → fix |
+| 17 | [portability.md](17-portability.md) | What transfers to other cams in the OEM family |
 | — | [ERRATA.md](ERRATA.md) | Log of corrections and claim updates |
 
 ## How to update
@@ -113,4 +114,4 @@ the project, read them in sequence.
   _observed_, _disassembled_, _inferred_, or _guessed_. See
   [`04-wire-format-kalay.md`](04-wire-format-kalay.md) for the legend.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_

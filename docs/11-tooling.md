@@ -1,4 +1,4 @@
-# 10 · Tooling reference
+# 11 · Tooling reference
 
 Every script in the project root, what it does, how to run it, and
 where its logs land. Listed in rough order of "when you&rsquo;d use it
@@ -324,7 +324,7 @@ All MITM log files land under `/tmp/cam-listen/`:
 | `inject.json` | `inject_p2p_req.py` | Injection target queue for SIGUSR1 |
 | `fake-cbs-certs/` | `fake_cbs_server.py` | Self-signed TLS cert material |
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_
 
 ## Quick commands cheat sheet
 

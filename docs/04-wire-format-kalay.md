@@ -95,7 +95,7 @@ binary output, not cleartext. The obfuscation function is presumably
 `cs2p2p__P2P_Proprietary_Decrypt` (the "Decrypt" name is misleading —
 it&rsquo;s called on both encrypt and decrypt paths). Whether it&rsquo;s pure XOR,
 a stream cipher, or a block cipher is **unverified** _(see
-`12-open-questions.md`)_.
+`13-open-questions.md`)_.
 
 Observed body structure, inferred from diffing bodies across sessions:
 
@@ -176,7 +176,7 @@ The camera&rsquo;s `thread_recv_Proto` dispatcher has no `cmp w0, #0x20` in
 its immediate-value branches, so the packet appears to be silently
 dropped. This is consistent with `P2P_REQ` being a client-role
 message: the camera is the target of the request, not the handler.
-The handler is the supernode. See [`12-open-questions.md`](12-open-questions.md).
+The handler is the supernode. See [`13-open-questions.md`](13-open-questions.md).
 
 ### `0x30` — LAN_SEARCH  (4 bytes) — LAN-local discovery   _observed_
 
@@ -315,7 +315,7 @@ _Z39cs2p2p_PPPP_Proto_Send_ReportSessionRdyPKciP11sockaddr_iniPcjS3_ccttS2_S2_S2
 So the 84-byte body encodes WAN, LAN, and relay endpoints plus some
 extra scalar metadata. Full layout is unknown because we haven&rsquo;t
 reversed the obfuscation function that wraps the bytes — see
-[`12-open-questions.md`](12-open-questions.md).
+[`13-open-questions.md`](13-open-questions.md).
 
 ## Types the cam dispatches on (device role) — partial analysis
 
@@ -414,11 +414,11 @@ seed, but the exact cipher is **unknown**:
 to — replay works for deterministic responses. For future attacks
 that need to craft novel encrypted bodies (e.g., a fake DEV_LGN for a
 different DID) we would need to reverse it. See
-[`12-open-questions.md`](12-open-questions.md).
+[`13-open-questions.md`](13-open-questions.md).
 
 For the "fake client" approach (see
-[`13-next-steps.md`](13-next-steps.md)), we also don&rsquo;t need to reverse
+[`14-next-steps.md`](14-next-steps.md)), we also don&rsquo;t need to reverse
 the obfuscation — we call the library functions directly via
 `PPCS_Connect` and let them do the work.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_

@@ -63,7 +63,7 @@ SSID. This takes 15-25 seconds typically.
 
 If no Wi-Fi is configured, the cam drops back into **AP mode** —
 broadcasts an `HAP-` SSID with no password and waits for a client to
-present a QR code via its imager. See [`09-mitm-setup.md`](09-mitm-setup.md)
+present a QR code via its imager. See [`09-router-setup.md`](09-router-setup.md)
 for how we use this for provisioning.
 
 ### DHCP
@@ -206,7 +206,7 @@ rejects the response and keeps retrying HELLO. Fix: echo any
 non-RFC1918 IP, e.g. TEST-NET-3 `203.0.113.37` as our code does. See
 the `FAKE_PUBLIC_IP` constant in `fake_supernode.py`.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_
 
 ### "Silent drop" (current blocker)
 
@@ -215,4 +215,4 @@ There&rsquo;s no error feedback, no log line, no increased retry rate — the
 cam just continues its 30-second keepalive. That makes it hard to
 debug: you send a packet and wait, and if nothing happens you have to
 assume it was dropped. This is why we pivoted to the "fake client via
-real supernode" approach in [`13-next-steps.md`](13-next-steps.md).
+real supernode" approach in [`14-next-steps.md`](14-next-steps.md).
