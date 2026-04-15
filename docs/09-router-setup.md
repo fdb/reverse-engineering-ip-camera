@@ -88,7 +88,8 @@ done
 
 # UDM side: iptables rule table and override file presence.
 ssh root@192.168.5.1 'iptables -t nat -L PREROUTING -v -n --line-numbers'
-ssh root@192.168.5.1 'ls -la /run/dnsmasq.dns.conf.d/'
+ssh root@192.168.5.1 'ls -la /run/dnsmasq.dhcp.conf.d/cam-override.conf 2>&1'
+ssh root@192.168.5.1 'ps -ef | grep "[d]nsmasq"  # confirm --conf-dir is /run/dnsmasq.dhcp.conf.d/'
 ```
 
 **Interpretation:**
@@ -118,7 +119,11 @@ Run on the UDM via `ssh root@192.168.5.1`. Pasteable top-to-bottom.
 
 ```sh
 SINK=203.0.113.37
-OVERRIDE=/run/dnsmasq.dns.conf.d/cam-override.conf
+# NOTE: the path is /run/dnsmasq.dhcp.conf.d/ (despite the "dhcp" name).
+# That is the main dnsmasq instance's --conf-dir per `ps -ef`. The
+# similarly-named /run/dnsmasq.dns.conf.d/ holds main.conf and eth4.conf
+# but is NOT a conf-dir, so address= files dropped there are ignored.
+OVERRIDE=/run/dnsmasq.dhcp.conf.d/cam-override.conf
 
 cat > "$OVERRIDE" <<EOF
 # camre: cam cloud sinkhole
@@ -128,7 +133,12 @@ address=/hapsee.cn/$SINK
 address=/dayunlinks.cn/$SINK
 address=/philipsiot.com/$SINK
 EOF
-killall -HUP dnsmasq
+
+# Hard-restart the main dnsmasq: SIGHUP is INSUFFICIENT because dnsmasq
+# does not re-read --conf-file / --conf-dir files on SIGHUP (only
+# --hostsdir and /etc/ethers). Killing the PID lets the UDM supervisor
+# respawn it with its original args, which now picks up our new file.
+kill $(cat /run/dnsmasq-main.pid)
 
 CAM=192.168.5.37
 MAC=192.168.5.233
@@ -153,11 +163,24 @@ iptables -t nat -A POSTROUTING -s $CAM -d $MAC -j MASQUERADE \
 
 Notes:
 
-- **`/run/dnsmasq.dns.conf.d/`** is the correct path on current UDM
-  firmware. Earlier revisions of this doc pointed at
-  `/run/dnsmasq.conf.d/`, which does not exist on modern UDM builds
-  — edits there silently had no effect and the pipeline appeared to
-  work only because of stale state. See [`ERRATA.md`](ERRATA.md).
+- **The dnsmasq path trap**. On the UDM there are TWO
+  similarly-named directories: `/run/dnsmasq.dns.conf.d/` holds the
+  main config *files* (`main.conf`, `eth4.conf`) as loaded via
+  `--conf-file=...`, while `/run/dnsmasq.dhcp.conf.d/` is the main
+  instance&rsquo;s `--conf-dir`. An `address=` directive only takes
+  effect if it lives in a file that dnsmasq actually reads as a
+  conf-file or conf-dir entry. Confirm the live args with
+  `ps -ef | grep dnsmasq` before trusting any doc. Earlier revisions
+  of this file pointed at the wrong path entirely
+  (`/run/dnsmasq.conf.d/`, which does not exist). See
+  [`ERRATA.md`](ERRATA.md) entries ERR-009 and ERR-010.
+- **SIGHUP does not reload conf-dir files.** Per the dnsmasq manual,
+  SIGHUP rereads `/etc/ethers`, `--hostsdir` files, and `--addn-hosts`
+  files — but NOT `--conf-file` or `--conf-dir` contents. That means
+  `killall -HUP dnsmasq` will not pick up our `address=` lines even
+  if the file lives in the right directory. Full restart via
+  `kill $(cat /run/dnsmasq-main.pid)` (letting the supervisor
+  respawn) is the correct operation.
 - **TCP rules are inserted at position 2**, before the any-proto
   catch-alls. If you `-A` them to the end, the catch-all fires first
   for TCP traffic (it has no `-p` filter) and the cam&rsquo;s TLS packets
@@ -185,8 +208,10 @@ done
 
 Every line must end in `203.0.113.37`. If any line shows a real
 public IP, Phase 1&rsquo;s dnsmasq write did not take effect — most
-likely because the Unifi GUI regenerated
-`/run/dnsmasq.dns.conf.d/` in between. Re-run Phase 1.
+likely because the Unifi GUI regenerated the `.dns.conf.d/` and
+`.dhcp.conf.d/` directories in between, or because dnsmasq was
+never restarted (remember: SIGHUP does not reload conf-dir files).
+Re-run Phase 1.
 
 **Why `dig` and not iptables counters?** Because the two can
 disagree. In Session 6 we hit a case where iptables counters showed
@@ -200,8 +225,14 @@ numbers looked healthy. `dig` catches this; counters do not.
 ### Check B — iptables comment marker (UDM side)
 
 ```sh
-ssh root@192.168.5.1 "iptables-save | grep -- '--comment \"camre\"'"
+ssh root@192.168.5.1 "iptables-save | grep -F camre"
 ```
+
+Note: `iptables-save` renders the comment value bare (without
+surrounding quotes) when it contains no spaces, so a pattern like
+`--comment "camre"` never matches. Use `grep -F camre` instead —
+the `-F` forces literal matching and the word `camre` is distinctive
+enough to avoid false positives on any rule you didn&rsquo;t put there.
 
 Expect five lines: two TCP DNATs (sink and fallback IP), two
 any-proto DNATs, and one POSTROUTING MASQUERADE. If you see fewer,
@@ -263,7 +294,7 @@ rules.
 # UDM side:
 for t in nat filter; do
   iptables-save -t "$t" \
-    | grep -- '--comment "camre' \
+    | grep -F camre \
     | sed 's/^-A /-D /' \
     | while IFS= read -r rule; do
         # shellcheck disable=SC2086
@@ -271,15 +302,15 @@ for t in nat filter; do
       done
 done
 
-rm -f /run/dnsmasq.dns.conf.d/cam-override.conf
-killall -HUP dnsmasq
+rm -f /run/dnsmasq.dhcp.conf.d/cam-override.conf
+kill $(cat /run/dnsmasq-main.pid)   # supervisor respawns dnsmasq
 ```
 
 Verify nothing remains:
 
 ```sh
-iptables-save | grep -- '--comment "camre' || echo "clean"
-ls -la /run/dnsmasq.dns.conf.d/cam-override.conf 2>&1 | grep -q 'No such' \
+iptables-save | grep -F camre || echo "clean"
+ls -la /run/dnsmasq.dhcp.conf.d/cam-override.conf 2>&1 | grep -q 'No such' \
   && echo "override removed"
 ```
 

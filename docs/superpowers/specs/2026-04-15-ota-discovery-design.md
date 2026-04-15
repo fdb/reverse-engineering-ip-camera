@@ -114,7 +114,8 @@ for h in p2p5.cloudbirds.cn user.hapseemate.cn public.dayunlinks.cn; do
   printf "%-30s → %s\n" "$h" "$(dig @192.168.5.1 +short "$h" | head -1)"
 done
 ssh root@192.168.5.1 'iptables -t nat -L PREROUTING -v -n --line-numbers'
-ssh root@192.168.5.1 'ls -la /run/dnsmasq.dns.conf.d/'
+ssh root@192.168.5.1 'ls -la /run/dnsmasq.dhcp.conf.d/cam-override.conf 2>&1'
+ssh root@192.168.5.1 'ps -ef | grep "[d]nsmasq"   # confirm --conf-dir is .dhcp.conf.d/'
 ```
 
 Interpret: if `dig` returns anything other than the chosen sink
@@ -125,7 +126,12 @@ Interpret: if `dig` returns anything other than the chosen sink
 ```sh
 # On the UDM via SSH:
 SINK=203.0.113.37
-OVERRIDE=/run/dnsmasq.dns.conf.d/cam-override.conf
+# Path is /run/dnsmasq.dhcp.conf.d/ — that is the MAIN dnsmasq's
+# --conf-dir per `ps -ef`, despite the historical "dhcp" name in
+# the path. The similarly-named /run/dnsmasq.dns.conf.d/ holds
+# main.conf as --conf-file but is NOT a conf-dir, so address=
+# directives dropped there are ignored. See ERRATA ERR-010.
+OVERRIDE=/run/dnsmasq.dhcp.conf.d/cam-override.conf
 cat > "$OVERRIDE" <<EOF
 # camre: cam cloud sinkhole
 address=/cloudbirds.cn/$SINK
@@ -134,7 +140,11 @@ address=/hapsee.cn/$SINK
 address=/dayunlinks.cn/$SINK
 address=/philipsiot.com/$SINK
 EOF
-killall -HUP dnsmasq
+# Full restart — SIGHUP does NOT reload --conf-dir files (per the
+# dnsmasq manual; SIGHUP only rereads --hostsdir and /etc/ethers).
+# The UDM supervisor at PPID 5063 respawns dnsmasq with its original
+# args immediately after the kill.
+kill $(cat /run/dnsmasq-main.pid)
 
 CAM=192.168.5.37
 MAC=192.168.5.233
@@ -164,8 +174,10 @@ iptables -t nat -A POSTROUTING -s $CAM -d $MAC -j MASQUERADE \
 for h in p2p5.cloudbirds.cn user.hapseemate.cn public.dayunlinks.cn; do
   printf "%-30s → %s\n" "$h" "$(dig @192.168.5.1 +short "$h" | head -1)"
 done
-# UDM side: expect the comment-marked rules to be present
-ssh root@192.168.5.1 "iptables-save | grep -- '--comment \"camre\"'"
+# UDM side: expect five comment-marked rules. Use -F literal match
+# because iptables-save renders --comment values bare (no quotes)
+# when they contain no spaces — see ERRATA ERR-010.
+ssh root@192.168.5.1 "iptables-save | grep -F camre"
 ```
 
 **Phase 3 — Block br4 WAN egress (OPTIONAL, not for this session):**
@@ -185,15 +197,15 @@ iptables -I FORWARD 2 -i br4 -o eth4 -j DROP \
 # need to recover table context from iptables-save output.
 for t in nat filter; do
   iptables-save -t "$t" \
-    | grep -- '--comment "camre' \
+    | grep -F camre \
     | sed 's/^-A /-D /' \
     | while IFS= read -r rule; do
         # shellcheck disable=SC2086
         iptables -t "$t" $rule 2>/dev/null
       done
 done
-rm -f /run/dnsmasq.dns.conf.d/cam-override.conf
-killall -HUP dnsmasq
+rm -f /run/dnsmasq.dhcp.conf.d/cam-override.conf
+kill $(cat /run/dnsmasq-main.pid)   # supervisor respawns
 ```
 
 **Sink IP rationale:** `203.0.113.37` is TEST-NET-3 (RFC 5737),

@@ -38,3 +38,21 @@ truth, not packet counters.** Run the `Phase 0 — Preflight` block from
 If `dig @192.168.5.1 user.hapseemate.cn` does not return `203.0.113.37`,
 stop and re-run Phase 1 before touching anything else. Never trust "it was
 working last session" — verify each session from scratch.
+
+## Android emulator tooling
+
+Android command-line tools are installed via Homebrew at
+`/opt/homebrew/share/android-commandlinetools/`. Homebrew only symlinks the
+top-level cmdline-tools binaries (`sdkmanager`, `avdmanager`, `adb`, etc.)
+into `/opt/homebrew/bin`, but **not** the ones that `sdkmanager` downloads
+later (the `emulator` binary in particular). Use the full path, or export:
+
+```sh
+export ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools
+export ANDROID_HOME=$ANDROID_SDK_ROOT
+export PATH=$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/platform-tools:$PATH
+```
+
+The AVD for this project is named `camtest` (ARM64, google_apis, API 34).
+See `docs/09-router-setup.md` and the Session 6 spec for the full Wave 3
+emulator setup and per-session launch flags.

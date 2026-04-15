@@ -16,6 +16,50 @@ of the docs are battle-tested vs. recently rewritten.
 Structural change to the docs tree, not a content correction, but
 recorded here so future readers can trace the slot shift.
 
+### ERR-010: dnsmasq override path and restart method
+
+- **Files**: `docs/09-router-setup.md`,
+  `docs/superpowers/specs/2026-04-15-ota-discovery-design.md` (Block 0).
+- **Was**: claimed the cam cloud sinkhole file should be written to
+  `/run/dnsmasq.dns.conf.d/cam-override.conf` and that dnsmasq should
+  be reloaded via `killall -HUP dnsmasq`.
+- **Now**: correct path is **`/run/dnsmasq.dhcp.conf.d/cam-override.conf`**,
+  and the correct reload mechanism is **`kill $(cat /run/dnsmasq-main.pid)`**,
+  letting the UDM supervisor respawn dnsmasq with its original args.
+- **Why**: discovered mid-Session-6 execution. After Phase 1 ran
+  "successfully" and reported `wrote cam-override.conf, SIGHUPed
+  dnsmasq`, `dig @192.168.5.1 user.hapseemate.cn` still returned the
+  real AWS ELB IP `190.92.254.71`. Two independent bugs caused this:
+  - **Wrong directory.** Inspecting the live process with
+    `ps -ef | grep dnsmasq` showed the main instance running with
+    `--conf-file=/run/dnsmasq.dns.conf.d/main.conf
+    --conf-dir=/run/dnsmasq.dhcp.conf.d/`. The `.dns.conf.d/` directory
+    is just where the main conf-file lives; it is NOT a conf-dir, so
+    any additional `address=` files dropped there are ignored. The
+    actual conf-dir (despite being named "dhcp" for historical
+    reasons) is `/run/dnsmasq.dhcp.conf.d/`.
+  - **Wrong reload signal.** Per the dnsmasq manual, SIGHUP clears
+    the cache and re-reads `/etc/ethers`, `--hostsdir` and
+    `--addn-hosts` files, but NOT `--conf-file` or `--conf-dir`
+    contents. Since our override uses `address=...` syntax (which
+    only exists in conf-files), SIGHUP has no effect on it. A full
+    process restart is required.
+  - After relocating the file to `.dhcp.conf.d/` and killing the
+    main dnsmasq PID (the UDM supervisor at pid 5063 immediately
+    respawned dnsmasq with the same args), `dig` started returning
+    `203.0.113.37` for every cam-cloud hostname.
+- **Bonus finding**: `iptables-save` renders comment values bare
+  when they contain no spaces (so `-m comment --comment camre`
+  becomes `--comment camre` in the save output, not `--comment
+  "camre"`). The Phase 4 teardown grep pattern has been switched
+  to `grep -F camre` to avoid the quoting trap.
+- **How it was found**: the correct diagnostic was to check the live
+  process args (`ps -ef | grep dnsmasq`) rather than trusting the
+  directory name. This is the same "evidence not assumption"
+  discipline the CLAUDE.md preflight rule mandates — `dig` is the
+  source of truth, and when `dig` disagrees with the doc, the doc
+  is the one that&rsquo;s wrong.
+
 ### ERR-009: `09-mitm-setup.md` split into router-side and Mac-side
 
 - **Files**: `docs/09-mitm-setup.md` → split into
