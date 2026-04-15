@@ -1,0 +1,23 @@
+# mitm_cbs_proxy.py veto policy
+# Reloaded on SIGHUP. Edit and SIGHUP the proxy to apply.
+#
+# Modes: forward | capture | drop
+
+default_mode: capture
+
+policies:
+  - match_suffix: .hapseemate.cn
+    mode: forward
+    note: "Primary CBS control-plane host family."
+  - match_suffix: .cloudbirds.cn
+    mode: forward
+    note: "Dayunlinks public brand; serves NTP wrappers and supernodes."
+  - match_suffix: .dayunlinks.cn
+    mode: forward
+    note: "public.dayunlinks.cn is the OTA version check host family."
+  - match_suffix: .philipsiot.com
+    mode: forward
+    note: "CNAME target for public.dayunlinks.cn via birds-public."
+  - match_suffix: app-measurement.com
+    mode: drop
+    note: "Firebase Analytics. Not relevant to cam RE."

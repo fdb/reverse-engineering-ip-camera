@@ -43,5 +43,9 @@ dist/
 site-*.png
 
 
-# Capture dumps (may contain session tokens, real IPs, email addresses)
-captures/
+# Capture dumps (may contain session tokens, real IPs, email addresses).
+# Use `captures/*` not `captures/` so that specific tracked files (the veto
+# config) can be re-included with a negation pattern — git cannot recover
+# files from an excluded parent directory.
+captures/*
+!captures/veto.yaml
