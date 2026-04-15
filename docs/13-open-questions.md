@@ -202,42 +202,104 @@ is already positioned for exactly that.
 - **Request body / HMAC on `checkDevVer`**. We know the endpoint
   exists from `Api.java:266-267` but haven&rsquo;t seen a request yet.
 
-### Does the cam verify signature on OTA firmware?
-
-Unknown — and Session 6&rsquo;s APK RE narrows where the answer lives.
-
-The **client** does not verify anything (no hash, no signature, no
-public key in the Android APK — because the client doesn&rsquo;t touch
-the firmware). Whatever validation exists is **entirely on the cam
-itself**, running in the cam&rsquo;s own firmware, which we don&rsquo;t have
-a copy of.
-
-If no on-cam signature check: we can flash custom firmware trivially
-once we know the update URL and can MITM the cam&rsquo;s download.
-
-If there is an on-cam signature check: we&rsquo;d need to find the public
-key, which is probably baked into the cam&rsquo;s u-boot or init binary —
-which again requires a firmware dump.
-
-**This question is blocked on physical firmware extraction OR on
-capturing a real update cycle through the router-side MITM.** See
-[`14-next-steps.md`](14-next-steps.md).
-
 ### Where does the cam fetch firmware from?
 
-**Priority: high** (moved up from implicit to explicit in Session 6).
-The Android app never sees the firmware URL — it just sends the
-Kalay IOCTRL `0x8116` and trusts the cam to handle the rest. So the
-URL is stored on the cam itself, either as a baked-in string or
-fetched from the cam&rsquo;s own initial-config path.
+**Status: MOSTLY ANSWERED in Session 7 Wave 4.** The cam&rsquo;s
+autonomous cold-boot firmware check goes to:
 
-**Plan**: bind the real cam to the throwaway test account on the
-emulator, tap "Check for updates" in the cam detail view, and
-watch `mitm_cbs.log` + `mitm_supernode.log` for any HTTPS call the
-cam initiates that we haven&rsquo;t seen in its normal keepalive traffic
-(currently limited to `user.hapseemate.cn/preadd/didBindUserId`
-and the Kalay supernode HA trio). Documented as a Session 7 step in
-[`14-next-steps.md`](14-next-steps.md).
+```
+GET https://dev-silent-upgrade.cloudbirds.cn/ota/device/version/upgrade/query
+    ?did=<DID>&version=<current>&timeZone=8&uptime=<sec>&module=
+```
+
+hosted on `139.9.220.198` (Huawei Cloud China). Full request format,
+response schema, and security properties are documented in
+[`03-cloud-topology.md`](03-cloud-topology.md) §"Cam firmware upgrade
+endpoint." The endpoint is completely unauthenticated (no HMAC, no
+nonce, cleartext DID) and returns an upgrade descriptor including
+`url`, `md5`, `size`, `soc`, and reboot-window fields when an
+upgrade is available.
+
+**What&rsquo;s still unknown**: the literal download URL for an actual
+firmware binary. Every probing angle has been exhausted in
+Session 8&rsquo;s extended Wave 4 analysis:
+
+- **Dynamic probing exhausted**: the server returns `code=13016`
+  ("up to date") for every combination we can construct —
+  real DID + current version, real DID + spoofed older versions
+  (6 variations), real DID + long uptime, real DID + different
+  module values, 28 fake DID prefixes (CFEOA–CFEOH letter sweep
+  plus SMNT*, HAPS*, PHIL*, DGOK, BATE, PTZA, FTYC, TNPCHNA,
+  XMSYSGB, TUYASA, VSTC, HXEUCAM, etc.). HTTP methods
+  HEAD/OPTIONS/POST/PUT/DELETE all tried (only GET/HEAD/OPTIONS
+  allowed). 15+ sibling path guesses all 404. Spring Boot
+  actuator endpoints 404 (good ops hygiene). See
+  [`03-cloud-topology.md`](03-cloud-topology.md) §"Cam firmware
+  upgrade endpoint" for the full probe catalog.
+
+- **Static analysis exhausted across two APK versions**:
+  decompiled `com.dayunlinks.cloudbirds` 6.5.0 AND 6.8.7 both show
+  ZERO references to `dev-silent-upgrade.cloudbirds.cn` or
+  `/ota/device/version/*`. The Android client has no knowledge of
+  cam firmware URLs at any version. The only firmware-related
+  strings in the app are field names (`firmwareVersion`,
+  `isFirmwareSupportAiAlarm`) for storing the cam&rsquo;s reported
+  version in memory. This is a structural invariant of the OEM
+  stack, not a gap in our analysis.
+
+- **OSINT exhausted**: CT logs (wildcard cert since Nov 2023 hides
+  new subdomains), `site:` searches, Wayback Machine (blocked),
+  GitHub (`DavidVentura/cam-reverse`, `devbis/aiopppp` — neither
+  has OTA info), Chinese mirror sites, Google Play developer
+  listings. No pre-captured Qianniao/Cloudbirds firmware dumps
+  exist anywhere publicly indexed.
+
+- **Tencent COS CDN at `app-file-cos-cdn.hapsee.cn`** is a private
+  bucket — every probe returns `403 AccessDenied`. Very likely
+  where actual APK and firmware binaries are hosted, but
+  inaccessible without signed URLs.
+
+**Conclusion**: the cam is genuinely on the latest firmware for its
+DID lookup, and no software-only probing from our network position
+will reveal a download URL the server doesn&rsquo;t have. This is a
+structural property of the OEM&rsquo;s server design, not a failure of
+our capture pipeline.
+
+**Next actions to get the download URL** (ordered by cost):
+
+1. **Wait passively** — leave the Wave 4 pipeline running
+   indefinitely. Zero new work. When Qianniao eventually pushes new
+   firmware for `CFEOA-417739-RTFUU`, the cam&rsquo;s next cold-boot
+   check will automatically land in our capture dir with a populated
+   `url` / `md5` / `size` payload. Could be days or months.
+2. **Buy a second Qianniao cam on older firmware** — any V360 Pro,
+   HapSee, KeepEyes, Smaint, or Philips Home Camera branded cam sold
+   in a stale AliExpress / Taobao / Amazon warehouse for a few weeks
+   will be on older firmware. First cold-boot through our Wave 4
+   MITM will trigger a real upgrade offer, exposing the download
+   URL. Cost: ~$10-20 + shipping. Time: 1-2 weeks. Documented as a
+   Session 9+ step in [`14-next-steps.md`](14-next-steps.md).
+3. **Hardware teardown of the current cam** — last resort after all
+   software paths are exhausted. Owner ruled it out for now because
+   the plastic case cannot be opened without destroying it. Requires
+   destructive disassembly + SPI flash dumper. Would definitively
+   yield the firmware.
+
+### Does the cam verify signature on OTA firmware?
+
+**Status: inferential answer from Session 7 Wave 4 response schema.**
+The captured `/ota/device/version/upgrade/query` response has an
+`md5` field but no signature or public-key field. This strongly
+suggests firmware integrity is **MD5-only** — no cryptographic
+signing. MD5 has been collision-broken since 2004, so any party
+controlling the download response can ship a modified firmware blob
+plus a crafted MD5 and the cam will accept it.
+
+**Still not proven**: we haven&rsquo;t observed the cam actually verifying
+an MD5 during a real upgrade cycle. The inference is purely from the
+response schema. To confirm or refute: either (a) intercept an actual
+firmware download and observe the cam&rsquo;s handling, or (b) firmware
+dump to read the upgrade verification code directly.
 
 ## Hardware unknowns
 

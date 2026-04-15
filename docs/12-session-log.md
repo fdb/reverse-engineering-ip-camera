@@ -452,6 +452,224 @@ non-obvious you figured out. Think of it as the project&rsquo;s changelog.
   `aiseebling.com` is now fully demystified and can be treated as
   "Qianniao OEM shared payment endpoint" in all future references.
 
+## 2026-04-15 — Session 8: Wave 4 execution + extended firmware-capture probe
+
+- **Goal of the session**: execute the Wave 4 spec end-to-end — apply
+  the default-deny veto gate on the UDM, restart the Mac-side MITM
+  proxy with the new veto code, bind the real cam (factory-reset path,
+  owner-authorised), trigger and capture the cam&rsquo;s autonomous
+  firmware check, and attempt to retrieve the actual firmware binary
+  via either a populated `url` field in the response or direct curl
+  of the captured URL.
+- **Pipeline restoration**: ran `scripts/phase2_veto_gate_apply.sh`
+  on the UDM; installed 6 new NAT rules + 3 FORWARD-chain filter
+  rules under the `camre-veto-*` comment-marker namespace.
+  Confirmed `dig @192.168.5.1` returned `203.0.113.37` for all four
+  target hostnames. Verified cam heartbeat still flowed through
+  `mitm_supernode_proxy.py` via the new UDP catch-all.
+- **Conntrack staleness finding**: after the Wave 4 rule apply, we
+  saw fresh `CAMRE-UNEXPECTED` drops in `dmesg` for the cam&rsquo;s
+  heartbeats to `47.89.232.167` (p2p6) and `8.134.120.63` (p2p5).
+  Root cause: existing UDP conntrack entries for those flows
+  bypassed the new PREROUTING DNAT. Fixed with
+  `conntrack -D -s 192.168.5.37` which flushed the stale entries
+  and forced all three supernode flows to re-enter PREROUTING and
+  pick up the catch-all. New documented finding: **the cam has
+  been talking to ALL three Kalay supernodes simultaneously** (not
+  just the one we saw in Session 5), and under Session 6&rsquo;s
+  narrow rules, two of them were leaking directly to WAN. Wave 4
+  plugged this leak. Also revealed the cam&rsquo;s
+  masquerade-direction conntrack tuples showing `dst=192.168.0.8`
+  — that&rsquo;s the UDM&rsquo;s WAN-facing interface IP (previously
+  unlogged). Documented in `03-cloud-topology.md`.
+- **Proxy restart hiccup**: the first attempt to kill the running
+  `mitm_cbs_proxy.py` (PID 5520) used
+  `pkill -f 'python3 mitm_cbs_proxy.py'` which did NOT match
+  because the actual process command line uses the resolved Python
+  binary path (`/opt/homebrew/Cellar/python@3.14/.../Python
+  mitm_cbs_proxy.py`) — no literal `python3` prefix. Retried with
+  `pkill -f 'mitm_cbs_proxy.py'` (script name only) and the kill
+  landed. Worth remembering for future sessions: don&rsquo;t include
+  the interpreter name in pkill patterns.
+- **Wave 4 proxy working end-to-end**: restarted with the new code
+  and saw the startup log confirm 5 veto policies loaded plus the
+  unified TLS+HTTP first-byte-sniff listener. Drove three local
+  tests (forward mode via `curl --resolve`, capture mode via an
+  unknown SNI, HTTP branch via plain `curl http://127.0.0.1:8443`)
+  — all three code paths exercised correctly.
+- **Factory-reset cam → fresh cold-boot capture**: Frederik
+  accidentally long-pressed the reset button (5s → 10s threshold)
+  while trying to put the cam in pairing mode. Net result: cam was
+  fully factory-reset. Unexpectedly this was the RIGHT thing —
+  because it gave us a clean slate cold-boot observation window
+  with NO prior account binding. Reprovisioned Wi-Fi via
+  `wifiqr.py` (our bypass of the `getDidByToken` telemetry step),
+  cam rejoined the LAN, kept its old DHCP lease `192.168.5.37`.
+- **Wave 4 DNS hijack added mid-execution**: observed the cam
+  sending raw DNS queries for `time.nist.gov` (AAAA),
+  `ntp.tuna.tsinghua.edu.cn`, and `user.hapseemate.cn` over UDP to
+  public resolvers — **ignoring the DHCP-assigned DNS**. The
+  hardcoded resolver was `208.67.222.222` (OpenDNS/Cisco), revealed
+  by pre-hijack conntrack inspection. The Wave 4 UDP catch-all was
+  DNAT&rsquo;ing all these DNS queries (port 53) to Mac:32100 where
+  the supernode proxy treated them as Kalay garbage. Fixed by
+  adding two new iptables rules at PREROUTING position 2:
+  `camre-veto-dns-hijack-udp` and `-tcp` which DNAT all cam DNS
+  traffic to `192.168.5.1:53` (the UDM&rsquo;s dnsmasq), regardless
+  of the cam&rsquo;s claimed destination IP. After flushing the
+  broken conntrack, the cam&rsquo;s DNS started landing on dnsmasq
+  correctly and returning sinkhole IPs. New finding for
+  `03-cloud-topology.md`: **the cam uses hardcoded OpenDNS, not
+  DHCP DNS**.
+- **🏆 Captured the cam firmware upgrade endpoint**: 
+  autonomously at second 330 after Wi-Fi came up, the cam sent:
+  ```
+  GET https://dev-silent-upgrade.cloudbirds.cn/ota/device/version/upgrade/query
+      ?did=CFEOA-417739-RTFUU
+      &version=V30904.1.149build20250721
+      &timeZone=8
+      &uptime=330
+      &module=
+  ```
+  hosted on `139.9.220.198` (Huawei Cloud China). Full response
+  schema documented in `03-cloud-topology.md` §"Cam firmware upgrade
+  endpoint." This is a **completely new hostname** that was never
+  in our Session 6 Wave 3 static analysis of the Android APK —
+  confirming that `dev-silent-upgrade.cloudbirds.cn` lives exclusively
+  in the cam&rsquo;s firmware, not in the app. Response schema:
+  `{taskCode, version, size, url, description, md5, upgradeTime,
+  soc, isReboot, rebootStart/End/Gap}`. **MD5-only integrity, no
+  cryptographic signature** — documented in `07-defenses.md`.
+- **Session 8 extended probing (negative result on firmware
+  binary)**: spent 60+ minutes trying to coax a non-empty `url`
+  field out of the server. All attempts returned the same
+  `code=13016 / "version is latest"` response:
+  - 6 spoofed older version strings (`V1.0`, `V30000.1.001`,
+    `V30900.1.0`, `V30904.1.100`, etc.)
+  - 28 DID prefix variations (CFEOA–H letter sweep, plus SMNT*,
+    HAPS*, PHIL*, DGOK, BATE, PTZA, FTYC, TNPCHNA, XMSYSGB, TUYASA,
+    VSTC, HXEUCAM, plus obviously-fake AAAAA and ZZZZZ)
+  - 5 HTTP methods (`OPTIONS` reveals `Allow: GET, HEAD, OPTIONS`
+    only; POST/PUT/DELETE return 405)
+  - 15+ sibling path guesses under `/ota/device/version/*`
+  - 17 Spring Boot actuator endpoints (all 404 — good ops hygiene)
+  - Fake DIDs are NOT rejected — the server returns the same 13016
+    response for real AND fake DIDs, proving the default-case
+    behavior is "up-to-date regardless of validation"
+- **Tencent COS CDN discovered but locked down**: the 6.8.7 APK
+  revealed a new hostname `app-file-cos-cdn.hapsee.cn` resolving to
+  `36.249.93.80` — confirmed Tencent Cloud Object Storage via the
+  `server: tencent-cos` response header. Most likely host for real
+  APK and firmware binaries. Bucket listing is disabled (`403
+  AccessDenied` on `/` and `/?delimiter=/`) and every probe for
+  plausible filenames returns 403. Tencent COS typically requires
+  signed URLs for content access — we&rsquo;d need the server to
+  generate a URL for us, which only happens when it actually has an
+  upgrade to offer.
+- **6.8.7 APK analysis**: downloaded V360 Pro 6.8.7 XAPK from
+  apkcombo (Frederik handled it manually after apkpure/apkmirror
+  403&rsquo;d), extracted the 100 MB main APK and its 9
+  `classes*.dex` files, strings-grepped for URL constants. **Key
+  diff vs 6.5.0**: ~15 new hostnames (documented in
+  `03-cloud-topology.md`), new `/public/checkAppVer` endpoint
+  (distinct from `/public/checkVer`) with response schema
+  including `url32`/`url64` APK download URL fields, new `/v3/user/*`
+  API migration, new `/icp/tag/*` AI-tag APIs, new `/cloudstorge/`
+  (sic — typo) cloud storage upgrade endpoint. **DEFINITIVE
+  NEGATIVE CONFIRMATION**: zero references to
+  `dev-silent-upgrade.cloudbirds.cn` or `/ota/device/version/*` in
+  either APK version. The Android client has no knowledge of cam
+  firmware URLs at ANY version — this is a structural invariant of
+  the OEM stack.
+- **Extended subdomain enumeration**: used `site:cloudbirds.cn`,
+  `site:dayunlinks.cn`, `site:hapseemate.cn` on search engines to
+  bypass the CT wildcard-cert limitation (Qianniao switched to
+  `*.cloudbirds.cn` wildcard Nov 2023, hiding individual subdomain
+  names from CT logs). Discovered: `iot.cloudbirds.cn` (internal
+  admin panel, NOT probed), `license.cloudbirds.cn` (HA clone of
+  dev-silent-upgrade), `file-server.dayunlinks.cn` (DNS alias for
+  CBS ELB), `glpt.dayunlinks.cn`, `keepeyes-support.hapseemate.cn`,
+  `databuried.cloudbirds.cn`, `support.cloudbirds.cn`,
+  `www.cloudbirds.cn`, `public.cloudbirds.cn`, plus the 9 `applive*`
+  hostnames (confirmed aliases for the Kalay supernode cluster —
+  `applive5.cloudbirds.cn == p2p5.cloudbirds.cn` resolves to the
+  same `8.134.120.63`). Shared-backend map of 9 distinct IPs across
+  4 cloud providers (AWS, Huawei Cloud, Alibaba, Tencent COS)
+  documented in `03-cloud-topology.md`.
+- **Ghost finding — license.cloudbirds.cn serves the same upgrade
+  endpoint**: probing `license.cloudbirds.cn/ota/device/version/upgrade/query`
+  returned the identical response to `dev-silent-upgrade`. Different
+  IPs (`110.41.70.176` vs `139.9.220.198`), both Huawei Cloud,
+  same Spring Boot app — an HA pair deployed in two zones.
+- **KeepEyes confirmed as a fourth Qianniao brand**: from the App
+  Store developer page
+  (`apps.apple.com/us/developer/shenzhen-qianniao-xiangyun-technology-co-ltd/id1713106928`)
+  we confirmed Shenzhen Qianniao Xiangyun publishes three apps on
+  iOS: V360 Pro, HapSeeMate+, and **KeepEyes**. KeepEyes is iOS-only
+  (no Google Play listing found), which is why we hadn&rsquo;t
+  encountered it before. `keepeyes-support.hapseemate.cn` in our
+  DNS probe ties this brand into the Qianniao backend cluster.
+- **Blockers hit**:
+  - **Firmware binary itself: NOT obtained**. Every probing angle
+    returned either `13016 up-to-date`, `404`, `403 AccessDenied`,
+    or dead-stub responses. The cam is genuinely on latest for its
+    DID lookup, and no software-only probing will reveal a URL the
+    server doesn&rsquo;t have. See `13-open-questions.md` for the
+    blocked-on-hardware-or-time state.
+  - APK download mirrors (apkpure, apkmirror, aptoide, soft112,
+    uptodown) all require their own installer or hit anti-bot 403
+    walls. Frederik worked around this manually for the 6.8.7
+    download.
+  - Wave 4 Phase 2 teardown script had a **quoting bug**: the
+    `camre-fwd-log` rule containing `--log-prefix "CAMRE-UNEXPECTED: "`
+    (with a space in the argument) survived the
+    `iptables-save | sed 's/-A /-D /' | xargs iptables`
+    teardown loop because bash word-splitting on the reconstructed
+    rule doesn&rsquo;t preserve the quoted argument. Cleaned up
+    manually at end-of-session. **TODO for the spec**: fix the
+    teardown loop to use explicit rule-number-based deletion or
+    proper bash quoting.
+- **Artifacts produced**:
+  - `mitm_cbs_proxy.py` Wave 4 extension (Phase 1 of the veto-gate
+    spec) — tested end-to-end against live cam and real upstream
+    traffic, zero crashes, all three modes (`forward` / `capture` /
+    `drop`) exercised on real requests
+  - `captures/ota/2026-04-15T22-33-10/` local capture directory
+    with ~47 exchanges including the cam firmware upgrade endpoint
+    (0036), the reprovisioning CBS call (0037), and 12 extended
+    probe exchanges (0038-0047) against `dev-silent-upgrade`
+  - `captures/ota/2026-04-15T22-33-10/FIRMWARE_URL.txt` — local
+    summary of the cam firmware endpoint capture and the
+    clean-reason explanation for why no binary was obtained
+  - `extracted/v687/xapk/` — unpacked V360 Pro 6.8.7 XAPK with main
+    APK, 9 DEX files, and split-config APKs (gitignored —
+    vendor binaries)
+  - `docs/03-cloud-topology.md` — major expansion covering the new
+    hostnames, shared-backend map, multi-cloud architecture, and
+    exhaustive probing catalog for the cam firmware endpoint
+  - `docs/13-open-questions.md` — firmware-URL question updated
+    with definitive negative result + blocked-on-hardware-or-time
+    next actions
+  - `docs/14-next-steps.md` — Session 8 status update at top + new
+    Step E ("buy a second cam on older firmware") as the
+    recommended Session 9+ primary path
+  - `docs/07-defenses.md` (unchanged this session, already had the
+    upgrade-endpoint no-auth finding from earlier)
+- **Status at end**: Wave 4 firmware capture mission was a
+  **substantive success on endpoint discovery and infrastructure
+  mapping**, but a **negative result on binary retrieval**. The
+  cam is too up-to-date to receive a real upgrade URL from the
+  server&rsquo;s DID-keyed lookup. All MITM pipeline state is now
+  FULLY TORN DOWN: Wave 4 iptables rules removed, dnsmasq override
+  deleted, main dnsmasq respawned, Mac proxies killed, emulator
+  killed via `adb emu kill`, adb daemon stopped. `dig
+  @192.168.5.1` now returns real cloud IPs for all cam hostnames
+  (verified). The cam can be safely powered off (Frederik&rsquo;s
+  intention for tonight), or left running on the real cloud —
+  either way nothing is intercepting it anymore. Future sessions
+  start from a clean slate via Phase 0 preflight +
+  `scripts/phase2_veto_gate_apply.sh`.
+
 ## Template for new session entries
 
 ```

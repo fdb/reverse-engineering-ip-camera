@@ -1,5 +1,6 @@
 # Large binary sources ─ don't commit vendor code or its derivatives
 *.apk
+*.xapk
 extracted/
 decompiled/
 

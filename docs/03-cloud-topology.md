@@ -35,6 +35,29 @@ All of this is captured from actual pcaps (`camera_phonehome*.pcap`).
 | `ntp_dyzl_ipc_address_3.cloudbirds.cn` | → `ntp.aliyun.com` | `203.107.6.88` | UDP 123 |
 | `ntp_dyzl_ipc_address_4.cloudbirds.cn` | → `pool.ntp.org` | varies | UDP 123 |
 | `ntp_dyzl_ipc_address_5.cloudbirds.cn` | → `ntp4.aliyun.com` | `203.107.6.88` | UDP 123 |
+| `time.nist.gov` | direct NIST | AAAA query only on cold boot — Session 7 Wave 4 | UDP 53 (DNS) |
+| `ntp.tuna.tsinghua.edu.cn` | Tsinghua University NTP | queried on cold boot — Session 7 Wave 4 | UDP 53 (DNS) |
+
+**Hardcoded DNS resolver (Session 7 Wave 4 finding)**: the cam ignores
+the DHCP-assigned DNS server (Option 6) and queries directly to
+**OpenDNS (`208.67.222.222`)** as its hardcoded resolver. Evidence:
+conntrack entries captured before our Wave 4 DNS hijack took effect
+showed `dst=208.67.222.222 sport=53XXX dport=53`. OpenDNS is an
+unusual choice for a Chinese OEM — most bake in Alibaba `223.5.5.5`
+or Google `8.8.8.8` — suggesting the firmware is built for
+international distribution where OpenDNS is a reliable unblocked
+resolver. This is a firmware fingerprint worth remembering when
+working with other cams in the Qianniao OEM family.
+
+**Wave 4 DNS hijack**: because the cam bypasses DHCP DNS, we had to
+add an iptables DNAT rule to force its UDP/53 and TCP/53 traffic to
+`192.168.5.1:53` (the UDM&rsquo;s dnsmasq) regardless of the original
+destination. Without this rule, the cam&rsquo;s DNS queries get swept up
+by the Wave 4 catch-all DNAT to Mac:32100 and break entirely,
+preventing any hostname resolution. Rule is installed at PREROUTING
+position 2 with the `camre-veto-dns-hijack-udp` / `-tcp` comment
+markers. See [`09-router-setup.md`](09-router-setup.md) and the Wave
+4 kick-off script.
 
 The Cloudbirds DNS infrastructure wraps three or four independent real
 NTP sources via CNAME, so the cam always gets a working NTP server even
@@ -66,6 +89,119 @@ IP-level traffic. We have to catch it with a dedicated `iptables -d
 
 **Protocol on 32100**: Kalay UDP (CS2 PPPP family). See
 [`04-wire-format-kalay.md`](04-wire-format-kalay.md) for byte details.
+
+### Cam firmware upgrade endpoint (captured Session 7 Wave 4)
+
+| Hostname | Real IP | Frontend | Used by | SNI |
+|---|---|---|---|---|
+| `dev-silent-upgrade.cloudbirds.cn` | `139.9.220.198` | **Huawei Cloud China** | **cam-only** — autonomous cold-boot firmware check | `dev-silent-upgrade.cloudbirds.cn` |
+| `license.cloudbirds.cn` | `110.41.70.176` | **Huawei Cloud China** (HA clone) | same Spring Boot app as `dev-silent-upgrade`, different zone | — |
+
+Both hostnames point to the same Spring Boot service deployed in two
+different Huawei Cloud zones — HA pair. `license.cloudbirds.cn` was
+confirmed to serve the identical `/ota/device/version/upgrade/query`
+response for identical queries. The "license" naming is a red herring;
+it&rsquo;s not a license/activation endpoint, it&rsquo;s a second instance of
+the firmware upgrade service. Probably part of the same pre-wildcard-cert
+era from before Nov 2023 when each service had its own hostname and
+subsequently got consolidated onto one shared service but both hostnames
+were kept for backwards compatibility.
+
+**What this endpoint is**: the cam&rsquo;s own firmware upgrade check. The
+cam hits this URL autonomously during cold boot (observed on Session 7
+at second 330 after Wi-Fi came up) without any app involvement. The
+Android client never talks to this host — it&rsquo;s not in
+`decompiled/sources/com/qianniao/**` or in the decrypted
+`URLConfig` dictionary; it lives only in the cam&rsquo;s own firmware.
+
+**Exact request format** (captured verbatim, cleartext after MITM):
+
+```
+GET /ota/device/version/upgrade/query
+    ?did=<DID>                              ← cleartext, no auth
+    &version=<V30904.1.149build20250721>   ← current firmware version
+    &timeZone=8                             ← hardcoded UTC+8 China
+    &uptime=<seconds_since_boot>
+    &module=                                ← observed empty
+HTTP/1.1
+Host: dev-silent-upgrade.cloudbirds.cn
+Accept: */*
+```
+
+**Response schema** (captured multiple times, all returned
+`code=13016` "up to date" because no newer firmware exists for this
+DID yet):
+
+```json
+{
+  "code": "13016",
+  "msg":  "版本是最新的，不需要升级",
+  "data": {
+    "taskCode":    "",
+    "version":     "",   ← latest available firmware version
+    "size":        "",   ← bytes
+    "url":         "",   ← firmware download URL
+    "description": "",   ← changelog
+    "md5":         "",   ← MD5 integrity hash (no cryptographic signature)
+    "upgradeTime": "",
+    "soc":         "",   ← SoC identifier for multi-hardware support
+    "isReboot":    "0",
+    "rebootStart": "",
+    "rebootEnd":   "",
+    "rebootGap":   ""
+  },
+  "time": "2026-04-16 04:46:04"   ← server clock UTC+8
+}
+```
+
+**Integrity model**: the response carries `md5` but no signature or
+public key. Implies MD5-only verification on the cam side — a serious
+cryptographic weakness (MD5 is collidable). Documented in
+[`07-defenses.md`](07-defenses.md).
+
+**Exhaustive probing summary (Session 8)**: we spent an extended
+session trying to coax a non-empty `url` field out of the server. Every
+combination returned the same `code=13016` ("up to date") response:
+
+- **Spoofed version strings**: `V1.0`, `V1.0.0build20200101`,
+  `V30000.1.001build20200101`, `V30900.1.0build20240101`,
+  `V30904.1.100build20250101`, and more. All return 13016.
+- **Spoofed uptime values**: 60s, 86400s. No effect.
+- **Spoofed module values**: empty, `ipc`. No effect.
+- **28 DID prefix variations**: `CFEOA`–`CFEOH` (letter sweep),
+  `SMNTA`, `SMAIN`, `SMNT`, `SMT`, `HAPSA`, `HPSEE`, `HAPSE`,
+  `PHILA`, `PHIL`, `PHI`, `XIANA`, `XSHIA`, `DGOK`, `BATE`, `PTZA`,
+  `FTYC`, `TNPCHNA`, `XMSYSGB`, `TUYASA`, `VSTC`, `HXEUCAM`,
+  `AAAAA`, `ZZZZZ`. All return 13016. Fake DIDs (`FAKEA-000000-AAAAA`,
+  `CFEOA-000001-AAAAA`) are NOT rejected — they get the same default
+  response, which means the server doesn&rsquo;t validate DID existence.
+- **HTTP methods**: `OPTIONS` returns `Allow: GET, HEAD, OPTIONS`.
+  `POST`/`PUT`/`DELETE` all return 405. Read-only endpoint.
+- **Sibling path guesses**: 15+ paths under `/ota/device/version/*`
+  and `/actuator/*` — all 404. The endpoint surface is exactly
+  `/ota/device/version/upgrade/query` and nothing else reachable.
+
+**Conclusion**: the server&rsquo;s behavior is consistent: return 13016 as
+the default for any DID+version combo it doesn&rsquo;t have a specific
+upgrade mapping for. Our cam on `V30904.1.149build20250721` is
+genuinely the latest offering for this SKU. No probing trick will
+conjure a download URL that doesn&rsquo;t exist server-side. Paths forward
+are documented in [`14-next-steps.md`](14-next-steps.md).
+
+**Authentication model**: **none**. DID is cleartext in the query
+string, no HMAC, no nonce, no cookie. We confirmed this by probing
+with fake DIDs (`FAKEA-000000-AAAAA`, `CFEOA-000001-AAAAA`) — the
+server returned the same `code=13016` response rather than rejecting
+the query, so unknown DIDs are not validated. This also means the
+endpoint is trivially enumerable by any caller.
+
+**Build timestamp coincidence**: the cam&rsquo;s current firmware
+`V30904.1.149build20250721` is stamped 2025-07-21 — within the same
+~2-week window as the `aiseebling.com` domain registration
+(2025-07-11). Suggests a coordinated OEM release that introduced the
+shared payment rail AND this firmware release together. See
+[`18-aiseebling-investigation.md`](18-aiseebling-investigation.md)
+for the brand-chain context.
 
 ### CBS control plane (TCP 443 TLS)
 
@@ -111,6 +247,91 @@ cloud. It implies:
 - The OEM supply chain touches Signify/Philips in some capacity —
   worth flagging for anyone doing broader portability work on the
   Qianniao / Kalay / CS2 PPPP OEM family.
+
+### Additional Qianniao OEM hostnames (discovered Session 8)
+
+An extended passive-OSINT pass in Session 8 (via `site:` search engines,
+DNS brute force, CT logs, and 6.8.7 APK decompile) surfaced ~15 new
+hostnames across the Qianniao OEM infrastructure. Not all are used by
+our cam, but they&rsquo;re cataloged here for future sessions and for
+portability analysis of the broader OEM family.
+
+| Hostname | Real IP | Purpose / evidence |
+|---|---|---|
+| `www.cloudbirds.cn` | `119.12.173.82` | Multi-brand white-label SPA (same template as `aiseebling.com`) |
+| `public.cloudbirds.cn` | `110.41.143.85` | Default nginx welcome page (likely dormant) |
+| `support.cloudbirds.cn` | `119.12.173.82` | Support portal (shared IP with `www.cloudbirds.cn`) |
+| `databuried.cloudbirds.cn` | `110.41.45.210` | Titled "支付结果" (payment result) despite the name. Analytics + post-payment confirmation. |
+| `iot.cloudbirds.cn` | `124.71.111.197` | **Internal admin console** titled "千鸟物联网IOT平台" (Qianniao IoT Network IOT Platform). Vite/Vue SPA. NOT probed — explicitly out of scope. |
+| `file-server.dayunlinks.cn` | `190.92.254.71` | DNS alias for the primary CBS ELB (same IP as `user.hapseemate.cn`). Serves `/download/app/download.html` (dead stub landing page referenced in `AppUpdateManager.java:139`). |
+| `glpt.dayunlinks.cn` | `139.159.136.15` | Admin login (千鸟物联网IOT platform console). Shared backend with `keepeyes-support.hapseemate.cn`. |
+| `keepeyes-support.hapseemate.cn` | `139.159.136.15` | **KeepEyes brand** support portal. New Qianniao brand confirmed via App Store developer listing. Shared backend with `glpt.dayunlinks.cn`. |
+| `app-file-cos-cdn.hapsee.cn` | `36.249.93.80` | **Tencent Cloud Object Storage CDN** edge. Confirmed via `server: tencent-cos` header and `x-cos-request-id`. Bucket is private (`403 AccessDenied` on all probes including `/?delimiter=/` bucket list). Strongly suspected host for actual APK / firmware binary downloads, but inaccessible without signed URLs. |
+| `applive1.cloudbirds.cn`…`applive9.cloudbirds.cn` | varies | **DNS aliases for the Kalay supernode cluster**. `applive5.cloudbirds.cn` resolves to `8.134.120.63` — the same IP as `p2p5.cloudbirds.cn`. Same HA cluster, different naming scheme for client-side live-streaming traffic. |
+| `keep_alive_app1.hapseemate.cn`…`keep_alive_app3.hapseemate.cn` | `47.74.225.75` etc. | App push-notification heartbeat relays on Aliyun Singapore |
+| `ai-voice-web.cloudbirds.cn` | — | Voice-assistant web interface (hostname in 6.8.7 APK strings, not seen on the wire) |
+
+### Shared-backend map (8+ distinct IPs for the Qianniao infrastructure)
+
+Assembled from Session 8 DNS resolution sweeps:
+
+| Backend IP | Hostnames sharing | Inferred role |
+|---|---|---|
+| `190.92.254.71` (AWS ELB) | `user.hapseemate.cn`, `file-server.dayunlinks.cn` | Primary CBS Spring Boot control plane (plus stub file server) |
+| `139.9.220.198` (Huawei Cloud) | `dev-silent-upgrade.cloudbirds.cn` | Primary cam firmware upgrade service |
+| `110.41.70.176` (Huawei Cloud) | `license.cloudbirds.cn` | HA clone of upgrade service |
+| `110.41.45.210` (Huawei Cloud) | `databuried.cloudbirds.cn` | Analytics / payment-result |
+| `110.41.143.85` (Huawei Cloud) | `public.cloudbirds.cn` | nginx welcome (dormant) |
+| `119.12.173.82` (Huawei Cloud) | `www.cloudbirds.cn`, `support.cloudbirds.cn` | Static marketing + support UI |
+| `124.71.111.197` (Huawei Cloud) | `iot.cloudbirds.cn` | Internal admin panel |
+| `139.159.136.15` (Huawei Cloud) | `glpt.dayunlinks.cn`, `keepeyes-support.hapseemate.cn` | Shared admin/support backend |
+| `36.249.93.80` (Tencent COS edge) | `app-file-cos-cdn.hapsee.cn` | Private Tencent COS bucket |
+
+**Architecture observation**: the Qianniao OEM splits its infrastructure
+between **AWS** (primary CBS control plane for international traffic),
+**Huawei Cloud** (admin panels, upgrade services, analytics, static
+pages), **Alibaba Cloud** (Kalay P2P supernodes — `p2p5/p2p6/applive*`),
+and **Tencent COS** (CDN for file/APK/firmware hosting). That&rsquo;s
+four separate cloud providers for one OEM stack — a pragmatic
+multi-cloud setup probably driven by geographic performance (Aliyun is
+fastest for mainland China Kalay P2P) and feature alignment (Tencent COS
+is the Chinese-market standard for object storage). See
+[`16-debugging.md`](16-debugging.md) if you&rsquo;re tracing unexpected
+packets to any of these.
+
+### App update endpoint (distinct from cam firmware — Session 8)
+
+**`https://public.dayunlinks.cn/public/checkAppVer`** — the APP update
+check, distinct from `/public/checkVer`. Captured unauthenticated
+response schema:
+
+```json
+{
+  "code": "200",
+  "msg":  "成功",
+  "data": {
+    "dlCh":     "",        ← download channel
+    "isUpdate": "0",       ← 0=latest, 1=optional, 2=force
+    "content":  "Currently the latest version",
+    "url32":    "",        ← 32-bit ARM APK URL
+    "url64":    "",        ← 64-bit ARM APK URL
+  },
+  "time": "2026-04-16 05:36:40"
+}
+```
+
+Unauthenticated, no parameters required for the basic "am I on the
+latest" check. When an update IS available, `url32` and `url64` are
+populated with APK download URLs — almost certainly pointing at
+`app-file-cos-cdn.hapsee.cn` (the Tencent COS CDN), but our probe
+returned empty fields because the client is on "latest" per the
+server&rsquo;s lookup.
+
+This is the REAL app-update endpoint used in 6.8.7; the older 6.5.0
+`AppUpdateManager.java:139` still references the legacy
+`http://file-server.dayunlinks.cn/download/app/download.html` path
+which is a dead stub. The server infrastructure was migrated; the
+6.5.0 APK just never got the update.
 
 **Cert pinning status on the cam: NONE.** The camera happily accepts
 our self-signed certificate as long as the hostname matches the SNI.

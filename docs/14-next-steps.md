@@ -9,13 +9,24 @@ that tells you whether to proceed or fall back to an alternative.
 > outdated copy of next-steps at the root, trust this one.
 
 **Primary objective (as of Session 6):** capture the cam&rsquo;s
-**firmware binary** in flight during a self-update cycle. Session 6
-established that the Android client never touches firmware bytes — it
-only sends the Kalay IOCTRL `0x8116` zero-payload "upgrade yourself"
-command, and the cam then fetches the binary from its own baked-in
-update server. Therefore **firmware capture requires cam-side
-interception**, and our router-side MITM is already positioned for
-exactly that. See Step A below.
+**firmware binary** in flight during a self-update cycle.
+
+**Status update (Session 8):** Step A was executed in Session 8. We
+captured the complete cam firmware upgrade endpoint
+(`dev-silent-upgrade.cloudbirds.cn/ota/device/version/upgrade/query`),
+its full response schema (including the `url`, `md5`, `size`, `soc`
+fields), and its deterministic "code=13016 / up-to-date" behavior
+across 28 DID prefixes, 6 spoofed versions, 5 HTTP methods, 15+
+sibling paths, and two independent APK versions (6.5.0 + 6.8.7).
+**We did NOT obtain a firmware binary** — the cam is genuinely on the
+latest version and the server has no download URL to emit for this DID.
+
+See [`03-cloud-topology.md`](03-cloud-topology.md) §"Cam firmware
+upgrade endpoint" for the full endpoint documentation, and
+[`13-open-questions.md`](13-open-questions.md) §"Where does the cam
+fetch firmware from" for the exhaustive probe list. The firmware-binary
+goal is now blocked on either (a) Qianniao releasing new firmware, or
+(b) acquiring a second cam on an older firmware. See Step E below.
 
 **Secondary blocker (from Session 5, still unresolved):** we can observe
 everything the cam sends, but we can&rsquo;t get it to open a DRW data
@@ -31,11 +42,102 @@ not depend on it.
 The rest of this doc assumes you&rsquo;ve read [`00-overview.md`](00-overview.md)
 and [`08-attack-chain.md`](08-attack-chain.md).
 
-## Step A — Firmware capture via bind-real-cam (new primary path)
+## Step E — Buy a second Qianniao cam on older firmware
+
+**Priority: high** (Session 9+ recommended primary path). Given the
+Session 8 negative result on firmware capture from our current cam,
+the cheapest guaranteed path to a firmware binary is to acquire a
+second cam that&rsquo;s shipped with older firmware.
+
+**Why this works**: Qianniao&rsquo;s upgrade server is DID-keyed — it
+looks up "what&rsquo;s the latest firmware for THIS specific DID" and
+returns 13016 ("up to date") when no newer mapping exists. Our cam&rsquo;s
+DID `CFEOA-417739-RTFUU` is mapped to `V30904.1.149build20250721`
+(the same version we&rsquo;re running). But a cam that sat in an
+AliExpress / Taobao / Amazon warehouse for a few weeks before
+shipping will be running an older firmware version, and the server
+WILL offer it an upgrade during its first cold-boot check — which we
+capture with the Wave 4 pipeline intact.
+
+### Candidate products (any of these should work)
+
+All are published by Shenzhen Qianniao Xiangyun Technology Co., Ltd.
+and share the same Kalay + CBS backend stack:
+
+- **V360 Pro** branded cams — the same physical product family as
+  our current cam. DID prefix `CFEOA-*`. Cheapest, most direct
+  comparison.
+- **HapSee / HapSeeMate+** branded cams — different retail brand,
+  same OEM. DID prefix unknown but suspected `HAPSE*` or similar.
+- **KeepEyes** — third Qianniao brand (App Store verified). Likely
+  different DID prefix, may be on a different firmware track.
+- **Philips Home Camera** — Qianniao&rsquo;s Philips-branded line.
+  Confirmed from both Session 6 DNS (via `birds-public.philipsiot.com`
+  CNAME) and Session 7 aiseebling / `www.cloudbirds.cn` HTML
+  comments. Usually more expensive but has the strongest brand
+  credibility for a white-label OEM product.
+- **Smaint** / **Xinshian** / **Yunkankan** — other confirmed
+  reseller brands seen in `aiseebling.com` / `www.cloudbirds.cn`
+  HTML. Availability varies by market.
+
+### Procedure once the cam arrives
+
+1. Run Phase 0 preflight on [`09-router-setup.md`](09-router-setup.md)
+   to check/restore the MITM pipeline state.
+2. Re-apply the Wave 4 default-deny pipeline via
+   `scripts/phase2_veto_gate_apply.sh`, adapted to the new cam&rsquo;s
+   source IP if it differs from `192.168.5.37`. (Set a DHCP
+   reservation on the UDM before provisioning so the IP is stable.)
+3. Provision the new cam&rsquo;s Wi-Fi via `wifiqr.py` (no vendor app
+   needed — bypasses the `getDidByToken` telemetry step).
+4. **Let the cam cold-boot through the MITM**. Within 30-60 seconds
+   of Wi-Fi association, the cam will autonomously hit
+   `dev-silent-upgrade.cloudbirds.cn/ota/device/version/upgrade/query`
+   with its own DID and shipped version.
+5. **Watch the capture directory** for the exchange. If the server
+   returns a non-empty `url` field, copy it out.
+6. **Fetch the firmware binary separately** from the captured URL.
+   Use `curl` from the Mac with the cam&rsquo;s User-Agent and headers
+   replayed from the capture. This is Phase 7 from the Wave 4 spec
+   — gated on owner approval because it leaks our WAN IP to the
+   cam&rsquo;s update server.
+7. **Run binwalk / file / strings** on the downloaded binary to
+   confirm it&rsquo;s a real firmware image (not an encrypted blob).
+8. **Document everything** in `docs/12-session-log.md` Session 9 entry.
+
+### Risks / considerations
+
+- **DID prefix mismatch**: if the new cam&rsquo;s DID prefix maps to a
+  completely different firmware track, the response schema might
+  differ slightly. Have the capture pipeline generous enough to log
+  unknown fields.
+- **Cam might come pre-upgraded**: very new stock may have been
+  firmware-refreshed before shipping. Try to buy older stock or from
+  a seller with high turnover.
+- **Not all Qianniao brands share the same upgrade infrastructure**:
+  the Philips brand in particular may point at a different OEM
+  backend (that&rsquo;s what the `birds-public.philipsiot.com` CNAME in
+  Session 6 suggested). If the Philips cam hits a different upgrade
+  server than `dev-silent-upgrade.cloudbirds.cn`, we&rsquo;d learn
+  something about brand-specific OEM segmentation.
+
+## Step A — Firmware capture via bind-real-cam (Session 8 executed, no binary obtained)
 
 **Goal**: get a copy of the cam&rsquo;s own firmware binary by letting the
 normal app flow trigger a self-update cycle, with the cam&rsquo;s
 outbound traffic going through our router-side MITM.
+
+> ✅ **Session 8 execution status**: the full flow was executed end
+> to end. The cam was factory-reset and re-provisioned, its cold-boot
+> upgrade check was captured
+> (`dev-silent-upgrade.cloudbirds.cn/ota/device/version/upgrade/query`),
+> and the complete response schema was documented. But the server
+> returned `code=13016 / "version is latest"` for every query we
+> crafted — 28 DID prefixes, 6 version spoofs, 5 HTTP methods, 15+
+> sibling paths, both 6.5.0 and 6.8.7 APK versions. **No download URL
+> was emitted** because our cam&rsquo;s DID is genuinely mapped to the
+> latest firmware server-side. The Wave 4 pipeline works; the cam is
+> just "too new." See Step E above for the follow-up path.
 
 ### Risk assessment first
 
