@@ -284,11 +284,103 @@ non-obvious you figured out. Think of it as the project&rsquo;s changelog.
   structured capture), modified `fake_cbs_server.py` (SAN list),
   preflight rule in `CLAUDE.md`, updates to
   `03-cloud-topology.md` / `07-defenses.md` / `13-open-questions.md`.
-- **Status at end**: router-state restoration script written but
-  not yet executed on the live UDM (pending Frederik). Emulator
-  tooling not yet installed (`brew install --cask android-commandlinetools`
-  pending). Spec and supporting scaffolding is ready; Wave 3 is
-  a ~20-minute interactive run once someone is at the keyboard.
+- **Status at Wave 2 end**: router-state restoration script written,
+  emulator tooling not yet installed, spec and supporting scaffolding
+  ready; Wave 3 was a ~20-minute interactive run after `brew install`.
+
+### Wave 3 (executed) — live capture of the app&rsquo;s OTA flow
+
+- **Router Phase 1 applied live.** Discovered ERR-010 in the process
+  (wrong dnsmasq dir + SIGHUP insufficiency). After correction, `dig
+  @192.168.5.1 user.hapseemate.cn → 203.0.113.37` for all five target
+  hostnames. Cam-side pipeline confirmed alive by observing live
+  DEV_LGN / DEV_LGN_ACK heartbeats in `mitm_supernode.log` from
+  192.168.5.1:* to the real Aliyun supernodes — first time the cam
+  has actually routed through our MITM since Session 5 broke it.
+- **Emulator tooling**: `brew install --cask android-commandlinetools`
+  + `sdkmanager` to install `platform-tools`, `emulator`,
+  `system-images;android-34;google_apis;arm64-v8a`, `platforms;android-34`.
+  Requires Temurin JDK on PATH; `/opt/homebrew/share/android-commandlinetools/emulator/emulator`
+  is NOT auto-symlinked by brew and needs an explicit PATH export.
+  Documented in `CLAUDE.md`.
+- **AVD**: created `camtest` (pixel_6 profile, arm64-v8a, google_apis,
+  API 34) preserved at `~/.android/avd/camtest.avd` for future reuse.
+- **Trust-path trick**: discovered via Wave 1 Agent D that the V360
+  Pro app uses an allow-all `X509TrustManager` + allow-all
+  `HostnameVerifier` (`com/qianniao/base/http/HttpClient.java:71-105`).
+  **No CA push, no `-writable-system`, no Frida required** — the app
+  accepts any self-signed cert. This cut Wave 3 trust setup from
+  ~30 min (Magisk flow) to ~0 min (just use the existing
+  `fake_cbs_server.py` cert).
+- **Traffic capture path**: edited `/system/etc/hosts` on the emulator
+  to sinkhole all target hostnames to `127.0.0.1`, then
+  `adb reverse tcp:443 tcp:8443` to forward the emulator&rsquo;s `127.0.0.1:443`
+  connections to the Mac&rsquo;s `127.0.0.1:8443` where `mitm_cbs_proxy.py`
+  listens. Clean, sudo-free, pfctl-free. Emulator stayed isolated
+  from the Mac&rsquo;s real DNS resolver throughout.
+- **Captured 14 exchanges** in `captures/ota/2026-04-15T10-58-07/`
+  during app cold-start + consent + account registration + login +
+  home-screen + an attempted add-device flow. (The `captures/` dir is
+  gitignored because it contains session tokens and a real public IP.)
+- **Key finding 1 — the app-level OTA endpoint confirmed empirically**:
+  exchange 0017 is `POST public.dayunlinks.cn/public/checkVer`, which
+  the app calls automatically on every SplashActivity. Response:
+  `{"ver":0,"message":"The app version is the latest","status":200}`.
+- **Key finding 2 — `/domainname/all` is a one-shot backend
+  substitution surface**: exchange 0003 is the app&rsquo;s startup
+  directory fetch, which returns an encrypted JSON dict mapping
+  every service name to a URL. Decrypted offline with
+  `AesUtil.URL_KEY = "24QLQzq5DZjy4boX"` (AES-128-ECB, PKCS7 padded).
+  All 10 fields revealed, 4 of them brand-new hostnames — documented
+  in `03-cloud-topology.md`. One new OEM brand surfaced:
+  `payment.aiseebling.com`. One anomaly: `cancellation` is plain
+  `http://`, not `https://`.
+- **Key finding 3 — the client does NOT download firmware**
+  (Wave 3 APK static analysis, Agent F). `DeviceVer` has no URL
+  field; no `@Streaming` Retrofit methods in the `qianniao`
+  packages; no `FileOutputStream` writes from HTTP bodies. The
+  upgrade trigger is a single Kalay IOCTRL:
+  `IOTYPE_USER_IPCAM_SET_UPGRADE_REQ = 0x8116` with a **36-byte
+  all-zero payload** — no URL, no auth, no signature. The cam
+  self-fetches from its own baked-in update server. Documented in
+  `04-wire-format-kalay.md` §DRW IOCTRL commands.
+- **Key finding 4 — implication for firmware capture**: since the
+  app doesn&rsquo;t touch firmware bytes, capturing the binary in
+  flight requires **cam-side interception**, not app-side. Our
+  router-side MITM pipeline is already positioned for exactly that.
+  Session 7&rsquo;s primary objective is to trigger a real update cycle
+  via the bind-real-cam flow and catch the cam&rsquo;s self-fetch
+  traffic. Documented as Step A in `14-next-steps.md`.
+- **Key finding 5 — bonus vendor security notes**:
+  - The `/user/login.html` response body includes a `pwd` field
+    containing base64-encoded bytes (`iPm9akcdXTmb2AHyfpvegg==`,
+    18 bytes). Either a session token mis-named, or the vendor is
+    round-tripping a reversible transform of the password — either
+    way suspicious. Noted in `03-cloud-topology.md`.
+  - The client-side "battery > 25% required for upgrade" check at
+    `DeviceInfoFragment.java:198-209` is a pure UX gate. Sending
+    `0x8116` directly bypasses it.
+  - Five AES-128 keys are baked into `com/qianniao/base/utils/AesUtil.java`
+    (DATA_KEY, DOMAIN_KEY, URL_KEY, WEB_KEY, XIAODUAI_KEY), all in
+    ECB mode. Cataloged in `07-defenses.md`. URL_KEY cracked and
+    used this session.
+  - `payment.aiseebling.com` surfaces a **fifth OEM brand** in the
+    supply chain alongside Qianniao / Cloudbirds / HapSee / Signify-Philips.
+    First reference we have to this domain.
+- **Ground truth on supported countries**: the
+  `/user/getOpenCountryCode` endpoint returns
+  `["CN","TW","TH","US","VN","MY","MX","RU"]`. Belgium is not on
+  the list — Frederik registered anyway because the backend
+  doesn&rsquo;t hard-enforce.
+- **Status at end of Wave 3**: primary Session 6 goals achieved
+  (OTA discovery + pipeline restoration + APK RE). Emulator cleanly
+  shut down (`adb emu kill`); AVD preserved. MITM proxies and
+  router rules left running for potential cam-side activity
+  capture. Three commits on main:
+  - `7082b81` docs restructure + renumber cascade (Wave 1)
+  - `4051a21` OTA discovery scaffolding + findings (Wave 2)
+  - `06c7fc2` ERR-010 dnsmasq path + restart method (Wave 3 mid-run)
+  - (this session&rsquo;s Wave 3 findings pending one more commit)
 
 ## Template for new session entries
 

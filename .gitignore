@@ -42,3 +42,6 @@ dist/
 .playwright-mcp/
 site-*.png
 
+
+# Capture dumps (may contain session tokens, real IPs, email addresses)
+captures/

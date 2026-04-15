@@ -421,4 +421,47 @@ For the "fake client" approach (see
 the obfuscation — we call the library functions directly via
 `PPCS_Connect` and let them do the work.
 
+## DRW IOCTRL commands (second layer, inside `0xD0` data frames)
+
+The Kalay message type `0xD0 DRW` is a generic envelope for a
+**data read/write channel**. Its payload is not interpreted by the
+Kalay library itself; instead, the cam and the client send each other
+"IOCTRL" frames inside the DRW body, and the cam&rsquo;s application-layer
+code (the part of the cam firmware above Kalay) dispatches on those.
+
+### IOCTRL frame layout (observed from decompiled client code)
+
+An IOCTRL is a 16-bit **type code** followed by a command-specific
+payload. We haven&rsquo;t yet captured a DRW payload on the wire (the cam
+won&rsquo;t open a DRW channel for us yet — see the "device role dispatch"
+section above), but we have the full IOCTRL catalog from the
+decompiled app&rsquo;s `ppcs/sdk/cmd/CMD.java`. Each command is sent via
+`Connect.sendCmd(type, buffer)` inside `P2pSDK.java`, which in turn
+wraps the bytes into a DRW frame and writes to the session socket.
+
+### IOCTRL types of direct RE interest
+
+| Type | Name | Payload | Purpose | Source |
+|---|---|---|---|---|
+| `0x8116` (33046) | `IOTYPE_USER_IPCAM_SET_UPGRADE_REQ` | **36 bytes: one LE `int32 0` + 32 zero bytes** | **Trigger cam firmware self-upgrade.** Zero-payload "do it" — no URL, no version, no signature, no nonce. The cam interprets this as "go fetch and install whatever your baked-in update server offers." | `ppcs/sdk/cmd/CMD.java:2554-2576` |
+| `0x8117` (33047) | `IOTYPE_USER_IPCAM_SET_UPGRADE_RESP` | (reply-side) | Cam&rsquo;s acknowledgement / progress response to the above | `CMD.java:2554-2576` |
+| `0x812d` (33069) | `IOTYPE_HOST_DOWNLOAD_FILE` | (download recorded clips from SD card) | **Reverse direction** — app downloading from cam. Note this is NOT firmware push; it&rsquo;s SD-card clip retrieval. | `CMD.java:3245-3248` |
+
+**Security implication of `0x8116`**: there is no authentication on
+the upgrade command. Any party that can send a DRW frame to the cam
+(i.e., anyone who can establish a DRW session) can force-upgrade it.
+The client-side "battery > 25%" check at
+`com/qianniao/setting/fragment/DeviceInfoFragment.java:198-209` is a
+UX gate only, bypassable by sending the IOCTRL directly. Documented
+in [`07-defenses.md`](07-defenses.md).
+
+**Why this matters for firmware capture**: the app does not download
+firmware itself (per Session 6 Wave 3 static analysis — see
+[`12-session-log.md`](12-session-log.md)). The upgrade flow is
+100% app-triggers-cam-self-fetch. Therefore **capturing the firmware
+binary in flight requires intercepting the cam&rsquo;s own outbound HTTPS
+traffic during a self-update cycle**, not the app&rsquo;s. Our router-side
+MITM is the right tool for this; the app-side MITM would see only the
+`0x8116` trigger. See [`14-next-steps.md`](14-next-steps.md).
+
 _Last updated: 2026-04-15 — Session 6_

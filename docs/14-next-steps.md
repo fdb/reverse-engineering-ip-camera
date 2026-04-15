@@ -8,16 +8,148 @@ that tells you whether to proceed or fall back to an alternative.
 > this file) has been deprecated in favor of this doc. If you find an
 > outdated copy of next-steps at the root, trust this one.
 
-**Current blocker** (carries over from the session log): we can
-observe everything the cam sends, but we can&rsquo;t get it to open a
-data session because we don&rsquo;t know which Kalay message type the
-real supernode uses to tell the cam "here&rsquo;s a peer". Our injection
-attempts with `P2P_REQ (0x20)` and `PUNCH_TO (0x40)` are silently
-dropped by the cam&rsquo;s device-role dispatcher, which accepts only
-types `0x13, 0x30, 0x31, 0x3f, 0x52, 0x55, 0xdb, 0xdc`.
+**Primary objective (as of Session 6):** capture the cam&rsquo;s
+**firmware binary** in flight during a self-update cycle. Session 6
+established that the Android client never touches firmware bytes — it
+only sends the Kalay IOCTRL `0x8116` zero-payload "upgrade yourself"
+command, and the cam then fetches the binary from its own baked-in
+update server. Therefore **firmware capture requires cam-side
+interception**, and our router-side MITM is already positioned for
+exactly that. See Step A below.
+
+**Secondary blocker (from Session 5, still unresolved):** we can observe
+everything the cam sends, but we can&rsquo;t get it to open a DRW data
+session because we don&rsquo;t know which Kalay message type the real
+supernode uses to tell the cam "here&rsquo;s a peer." Injection attempts
+with `P2P_REQ (0x20)` and `PUNCH_TO (0x40)` are silently dropped by the
+cam&rsquo;s device-role dispatcher, which accepts only types
+`0x13, 0x30, 0x31, 0x3f, 0x52, 0x55, 0xdb, 0xdc`. This still matters
+for video capture and for directly crafting an `0x8116` IOCTRL to the
+cam — see Step C below — but the firmware capture path (Step A) does
+not depend on it.
 
 The rest of this doc assumes you&rsquo;ve read [`00-overview.md`](00-overview.md)
 and [`08-attack-chain.md`](08-attack-chain.md).
+
+## Step A — Firmware capture via bind-real-cam (new primary path)
+
+**Goal**: get a copy of the cam&rsquo;s own firmware binary by letting the
+normal app flow trigger a self-update cycle, with the cam&rsquo;s
+outbound traffic going through our router-side MITM.
+
+### Risk assessment first
+
+This step **binds the real cam to a throwaway account**. Implications:
+
+- The cam&rsquo;s prior binding to the owner&rsquo;s primary account may be
+  invalidated or put in a "shared" state, depending on the OEM backend
+  logic.
+- On unbind (undoing this), the cam may factory-reset its user state
+  (stored creds, customised settings).
+- We are **not** flashing anything to the cam. The goal is just to
+  observe the cam&rsquo;s outbound HTTPS during a version check.
+- If the cam is already on the latest firmware version (likely — cam is
+  fresh), the update server may return "no update" without emitting any
+  download URL, and we learn nothing beyond the check endpoint. Have a
+  plan for forcing the cam to think it&rsquo;s outdated.
+
+### Sub-steps
+
+1. **Verify pipeline**. Run the preflight rule from
+   [`09-router-setup.md`](09-router-setup.md) Phase 0. `dig
+   @192.168.5.1 user.hapseemate.cn` must return `203.0.113.37` and the
+   camre-tagged iptables rules must be in place. Also confirm
+   `mitm_cbs_proxy.py` and `mitm_supernode_proxy.py` are running and
+   capturing to `captures/ota/<ts>/`.
+2. **Enumerate new hostnames first**. Before triggering the bind, scan
+   `libCBSClient.so` for any embedded hostname strings that might be
+   the cam&rsquo;s own update URL. Use `strings /path/to/extracted/lib/arm64-v8a/libCBSClient.so | grep -iE 'http|\.cn|\.com|upgrade|fw'`.
+   Add any new hostnames found to the dnsmasq sinkhole list in
+   `/run/dnsmasq.dhcp.conf.d/cam-override.conf` and re-apply Phase 1
+   of `09-router-setup.md` before proceeding. **This is critical** —
+   if the cam&rsquo;s update URL points at a hostname we&rsquo;re not
+   intercepting, the firmware bytes will stream directly to the real
+   update server and we&rsquo;ll see nothing useful in the MITM log.
+3. **Launch the emulator** (`camtest` AVD, already created in
+   Session 6 and preserved at `~/.android/avd/camtest.avd`), start
+   the V360 Pro app, and log in with the Session 6 throwaway account
+   (`deep.pack3852@fastmail.com`, masked). Re-enable `adb reverse
+   tcp:443 tcp:8443`.
+4. **Add the cam by real DID** (`CFEOA-417739-RTFUU`). Use the
+   `Scan to add` or `QR code add` flow. The app will hit
+   `/preadd/didBindUserId` and related endpoints; these should all
+   land in the cbs-proxy capture dir.
+5. **Tap the cam in the list → Settings → "Firmware" / "Check for
+   updates"**. This should fire `/public/checkDevVer` against
+   `public.dayunlinks.cn` (seen via our proxy) AND, upon receipt of
+   an available update, send an `0x8116` IOCTRL to the cam over a
+   DRW session that the app itself opens.
+6. **Watch the supernode + cbs logs for new hostnames**. The cam&rsquo;s
+   self-fetch will probably hit a hostname we haven&rsquo;t seen. If DNS
+   sinkhole is in place for it, the cbs proxy captures the stream.
+   If not, it leaks to the real cloud — repeat step 2 with the new
+   hostname and retry.
+7. **If the cam is "already latest"**, the server won&rsquo;t emit a
+   download URL. Workarounds:
+   - **Spoof a downgraded version in the request**. Requires intercepting
+     the `checkDevVer` request body, decoding it, and replacing the
+     version string. Possible but requires parsing the request format.
+   - **Unbind and re-bind** to see if that triggers a mandatory update
+     check with a fresh timestamp. Low-confidence.
+   - **Wait for the vendor to push a newer release**. Opportunistic,
+     not actionable now.
+
+**Fallback**: if Step A cannot be completed this session (privacy
+concerns about binding, vendor refuses bind, etc.), defer to Step C
+(direct IOCTRL injection, once DRW access is solved) or Step D
+(physical extraction).
+
+## Step B — Offline decryption of remaining AES-protected payloads
+
+**Goal**: catalog every use of the five AES keys baked into
+`AesUtil.java` (`DATA_KEY`, `DOMAIN_KEY`, `URL_KEY`, `WEB_KEY`,
+`XIAODUAI_KEY`). `URL_KEY` was cracked and used in Session 6 to decrypt
+the `/domainname/all` response (see [`03-cloud-topology.md`](03-cloud-topology.md)).
+The other four are still mystery-data.
+
+**How**: grep `decompiled/sources/com/qianniao/**` for each field
+name, identify call sites, log what payload types flow through each
+key, then decrypt any captured payloads we have that use those keys.
+Very quick — mostly reading, no tooling required. Could be a
+subagent task.
+
+## Step C — Direct IOCTRL `0x8116` injection
+
+**Goal**: force the cam to upgrade without going through the app at
+all. Send the Kalay DRW frame `0xD0` + IOCTRL `0x8116` (36 zero
+bytes) directly.
+
+**Blocker**: we don&rsquo;t yet have DRW access. The cam will not open a
+DRW session for us because we can&rsquo;t pass the device-role dispatcher
+check (see secondary blocker at the top of this doc). Solving this
+unlocks (a) video capture via DRW and (b) direct firmware upgrade
+via `0x8116` — one shared prerequisite.
+
+Reference: [`04-wire-format-kalay.md`](04-wire-format-kalay.md) §DRW
+IOCTRL commands for the full command catalog.
+
+## Step D — Physical firmware extraction (fallback if Step A fails)
+
+**Goal**: get the cam&rsquo;s firmware by opening it. See
+[`13-open-questions.md`](13-open-questions.md) §"Does the cam verify
+signature on OTA firmware" for the tradeoffs. Rough plan:
+
+1. Teardown, photograph the PCB, identify the main SoC (probably a
+   Hisilicon or similar low-end ARM; chip markings TBD).
+2. Identify the SPI/eMMC flash chip. For SPI, desolder OR use a test
+   clip + CH341A programmer. For eMMC, lift the chip or find test
+   pads.
+3. Dump the full flash image. Parse with `binwalk` to find the
+   filesystem partitions.
+4. Mount/extract the root filesystem. Grep for update-related
+   hostnames, public keys, verification logic.
+
+Higher effort than Step A but guaranteed to yield a firmware dump.
 
 ## Step 0 — Survey existing open-source Kalay clients (10 min)
 

@@ -10,15 +10,62 @@ and how each piece affects our attack.
 | DNS rebinding filter | ✅ yes | 🔶 partial | Non-RFC1918 DNS override + IP-level DNAT |
 | TLS certificate pinning (cam) | ❌ no | — | None needed |
 | TLS public key pinning (cam) | ❌ no | — | None needed |
-| **TLS trust on Android app** | ❌ **actively broken** | — | **None needed — app allow-alls every cert** |
+| **TLS trust on Android app** | ❌ **actively broken (allow-all)** | — | None needed — app allow-alls every cert (`com/qianniao/base/http/HttpClient.java:71-105`) |
+| **`/domainname/all` AES-128-ECB obfuscation** | ✅ present | ❌ useless | Key `URL_KEY = "24QLQzq5DZjy4boX"` baked into `com/qianniao/base/utils/AesUtil.java`; ECB mode means no IV; decryptable offline. One MITM of this single response rewrites every downstream API host the app uses. |
+| **Firmware upgrade authentication** | ❌ none | — | Kalay IOCTRL `0x8116` is a zero-payload "upgrade yourself" trigger with no auth, no nonce, no signature — whoever can reach the cam over DRW can force-upgrade it. |
+| **Client-side battery check on upgrade** | ✅ present | ❌ client-side only | `DeviceInfoFragment.java:198-209` refuses upgrade if `batteryVolume <= 25`, but this is a UX gate — sending IOCTRL `0x8116` directly bypasses it entirely. |
 | Kalay body obfuscation | ✅ yes | 🔶 partial | Replay known-good packets |
 | Hardcoded supernode IP | ✅ yes | 🔶 partial | Dedicated IP-level DNAT rule |
 | Session nonce in DEV_LGN | ✅ yes | ✅ yes | Not broken — cam regenerates per session |
 | App-side telemetry | ✅ yes | ✅ yes | We don&rsquo;t run the app |
 | Pre-QR cloud check | ✅ yes | ✅ yes | We don&rsquo;t run the app |
 | Device auth in CBS | 🔶 unknown | 🔶 unknown | Obfuscated blobs in request — semantics unknown |
-| Firmware code signing | ❓ unknown | — | Session 6 investigation in progress; Philips IoT backend suggests it&rsquo;s probably signed |
+| Firmware code signing (on-cam) | ❓ unknown | — | Client does not sign or verify anything (no download path on client, per Session 6 Wave 3 APK RE). Whether the cam itself verifies downloaded firmware is untested and remains an open question. |
 | Rate limiting | 🔶 not observed | — | None needed so far, see note below |
+
+## AES key table (baked into the APK)
+
+Five AES-128 keys are hardcoded in
+`decompiled/sources/com/qianniao/base/utils/AesUtil.java:14-20`:
+
+| Field name | Literal | What it protects |
+|---|---|---|
+| `DATA_KEY` | `"iyy17m8d2ah9care"` | Unknown — grep call sites to identify |
+| `DOMAIN_KEY` | `"GO9gbwFjTcP9QOXR"` | Misleading name — NOT used for `/domainname/all`. Unknown payload class. |
+| `URL_KEY` | `"24QLQzq5DZjy4boX"` | **`/domainname/all` response values** — each field is an AES-128-ECB ciphertext of a URL. |
+| `WEB_KEY` | `"iyy18m8d25h9care"` | Unknown — possibly WebView content encryption |
+| `XIAODUAI_KEY` | `"aiy20m8c24h4care"` | Unknown — the name "xiaodu ai" hints at a voice assistant integration |
+
+**All five use ECB mode**, per the native `AesC.decrypt` JNI signature in
+`decompiled/sources/org/openssl/aes/AesC.java:13` — the function takes no
+IV parameter. ECB leaks structural information for any payload longer than
+one block; if any long payloads flow through these keys, identical
+plaintext blocks produce identical ciphertext blocks.
+
+## `/domainname/all` one-shot backend takeover
+
+**What it is.** On every SplashActivity boot, the app calls
+`POST https://public.dayunlinks.cn/domainname/all` and receives an
+encrypted JSON dictionary mapping every service name the app knows
+(`user`, `push`, `pay`, `privacy`, `support`, etc.) to a URL. The app
+decrypts this locally with `URL_KEY` and stores the URLs in `URLConfig`
+(`com/qianniao/splash/SplashActivity.java:148-175`). Every subsequent API
+call — login, device list, firmware check, push polling — reads its
+target host from `URLConfig`.
+
+**Why it matters.** Because the app&rsquo;s TLS trust is allow-all and the
+decryption key is baked into the APK (so we can forge ciphertexts just as
+easily as we can read them), a single MITM of this one response gives
+the attacker full control over every downstream API hostname the app
+will contact for the rest of its lifetime. The `URL_KEY` is static
+across every install, so the forged response is universally valid.
+
+**Why that&rsquo;s a "defense" in this table.** It&rsquo;s the vendor&rsquo;s attempt
+at an obfuscation layer — presumably to make host substitution harder for
+casual reverse engineers, or to allow runtime host rotation without an
+APK update. As a security mechanism it fails open: it delivers none of
+its apparent goals but adds a single point of takeover that wouldn&rsquo;t
+exist if the hosts were just hardcoded.
 
 ## DNS rebinding filter
 

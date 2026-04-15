@@ -142,36 +142,102 @@ live streaming request.
 
 ### What&rsquo;s the OTA update endpoint?
 
-**Priority: medium, long-term.** Status: **partially answered in
-Session 6.** Static analysis of `decompiled/sources/com/qianniao/base/http/HttpClient.java`
-confirmed the app calls two endpoints for firmware version checks:
+**Priority: medium, long-term.** Status: **app-side fully answered in
+Session 6 Wave 3, cam-side still open.**
 
-- `https://public.dayunlinks.cn/public/checkDevVer`
-- `https://public.dayunlinks.cn/public/checkVer`
+**What we learned (app side):**
 
-Also discovered: `public.dayunlinks.cn` CNAMEs to
-`birds-public.philipsiot.com` → `190.92.254.74`. So the OTA backend
-is hosted on Philips Signify IoT infrastructure, not on Alibaba
-with the rest of the Chinese cloud stack. See `03-cloud-topology.md`
-for the full host map.
+- The app calls `POST https://public.dayunlinks.cn/public/checkVer` on
+  every startup. Captured live in Session 6 as exchange 0017.
+  Response: `{"ver":0,"message":"The app version is the latest","status":200}`.
+  We are currently on V360 Pro 6.5.0 and the server agrees.
+- `/public/checkDevVer` (the _device_ version check) is only fired
+  once a cam has been bound to the user&rsquo;s account. We did not
+  trigger it because the fake-DID manual-add flow does local LAN
+  discovery first and never calls the backend for validation.
+  Triggering it requires binding a real cam, which is parked as a
+  future step in [`14-next-steps.md`](14-next-steps.md).
+- The `public.dayunlinks.cn` host CNAMEs through
+  `birds-public.philipsiot.com` to Signify / Philips IoT
+  infrastructure at `190.92.254.74`. See
+  [`03-cloud-topology.md`](03-cloud-topology.md).
+
+**What we learned (cam side, via APK static analysis):**
+
+The Android app **does not download firmware**. Session 6 Wave 3 RE of
+`decompiled/sources/com/qianniao/**` showed that the entire firmware
+update protocol from the app&rsquo;s side is a single Kalay IOCTRL command:
+
+```
+IOTYPE_USER_IPCAM_SET_UPGRADE_REQ = 0x8116
+payload = 36 bytes, all zero
+```
+
+sent via `P2pSDK.updateDeviceFlash(did)` (see
+[`04-wire-format-kalay.md`](04-wire-format-kalay.md) §DRW IOCTRL
+commands). There is no URL in the payload, no signature, no version
+selector. The cam is expected to self-fetch firmware from its own
+baked-in update server after receiving this command. This means
+**capturing the firmware binary requires cam-side interception, not
+app-side** — which is good news because our router-side MITM pipeline
+is already positioned for exactly that.
 
 **Still unknown**:
-- The exact request body / query-string format (payload, HMAC, nonce).
-- The response schema (URL field, signature field, version compare rules).
-- Whether the cam itself hits these endpoints, or only the app — it&rsquo;s
-  possible the app checks for updates and then pushes a command to
-  the cam via Kalay to download over a different channel.
-- Whether the firmware binary is signed. (See next question.)
-
-**Plan**: Session 6 Wave 3 captures the app-side version-check flow
-via emulator-driven MITM, per
-`docs/superpowers/specs/2026-04-15-ota-discovery-design.md`.
+- **Where does the cam fetch firmware from?** This is now the central
+  question. The cam-internal update URL is not visible anywhere in
+  the Android APK, because the app doesn&rsquo;t know or care. Options to
+  discover it:
+  1. Trigger a real update via the bind-real-cam path, watch the
+     cam&rsquo;s outbound HTTPS on the router-side MITM. (See
+     [`14-next-steps.md`](14-next-steps.md).)
+  2. Teardown + UART + grep the cam filesystem for hostnames, once
+     we have a physical dump.
+  3. Static analysis of the `libCBSClient.so` ARM binary (we have a
+     copy from the APK, but it is the client-side library — the cam
+     has a different, probably similar but not identical copy).
+- **Does the cam verify a firmware signature before flashing?**
+  Client-side signature verification does not exist (because the
+  client doesn&rsquo;t touch the firmware). On-cam verification is
+  untested. Major question for future physical-access sessions.
+- **Request body / HMAC on `checkDevVer`**. We know the endpoint
+  exists from `Api.java:266-267` but haven&rsquo;t seen a request yet.
 
 ### Does the cam verify signature on OTA firmware?
 
-Unknown. If no signature check, we can flash custom firmware
-trivially. If there is a signature, we&rsquo;d need to find the public key
-and either build a cert-stripping patch or find a side-channel.
+Unknown — and Session 6&rsquo;s APK RE narrows where the answer lives.
+
+The **client** does not verify anything (no hash, no signature, no
+public key in the Android APK — because the client doesn&rsquo;t touch
+the firmware). Whatever validation exists is **entirely on the cam
+itself**, running in the cam&rsquo;s own firmware, which we don&rsquo;t have
+a copy of.
+
+If no on-cam signature check: we can flash custom firmware trivially
+once we know the update URL and can MITM the cam&rsquo;s download.
+
+If there is an on-cam signature check: we&rsquo;d need to find the public
+key, which is probably baked into the cam&rsquo;s u-boot or init binary —
+which again requires a firmware dump.
+
+**This question is blocked on physical firmware extraction OR on
+capturing a real update cycle through the router-side MITM.** See
+[`14-next-steps.md`](14-next-steps.md).
+
+### Where does the cam fetch firmware from?
+
+**Priority: high** (moved up from implicit to explicit in Session 6).
+The Android app never sees the firmware URL — it just sends the
+Kalay IOCTRL `0x8116` and trusts the cam to handle the rest. So the
+URL is stored on the cam itself, either as a baked-in string or
+fetched from the cam&rsquo;s own initial-config path.
+
+**Plan**: bind the real cam to the throwaway test account on the
+emulator, tap "Check for updates" in the cam detail view, and
+watch `mitm_cbs.log` + `mitm_supernode.log` for any HTTPS call the
+cam initiates that we haven&rsquo;t seen in its normal keepalive traffic
+(currently limited to `user.hapseemate.cn/preadd/didBindUserId`
+and the Kalay supernode HA trio). Documented as a Session 7 step in
+[`14-next-steps.md`](14-next-steps.md).
 
 ## Hardware unknowns
 

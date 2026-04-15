@@ -71,12 +71,27 @@ IP-level traffic. We have to catch it with a dedicated `iptables -d
 
 | Hostname | Real IP | Frontend | Used by | SNI |
 |---|---|---|---|---|
-| `user.hapseemate.cn` | `190.92.254.71` | **AWS Elastic Load Balancer** | cam + app (legacy) | `user.hapseemate.cn` |
-| `birds-user.hapseemate.cn` | resolves at runtime | (AWS ELB, same frontend family) | app primary API base URL | `birds-user.hapseemate.cn` |
-| `wechat.hapseemate.cn` | resolves at runtime | (AWS ELB) | app WeChat-login flow | — |
-| `ai-voice.cloudbirds.cn` | resolves at runtime | (unknown) | app voice commands | — |
-| `public.dayunlinks.cn` | **CNAME → `birds-public.philipsiot.com` → `190.92.254.74`** | **Philips Signify IoT infrastructure** | app OTA version check | `public.dayunlinks.cn` |
-| `apppush-hapseemate.dayunlinks.cn` | resolves at runtime | (Philips IoT?) | app push notifications | — |
+| `user.hapseemate.cn` | `190.92.254.71` | **AWS Elastic Load Balancer** | cam + app (legacy + `URLConfig.user`) | `user.hapseemate.cn` |
+| `birds-user.hapseemate.cn` | resolves at runtime | AWS ELB | app (hardcoded Retrofit base URL in `HttpClient.java:153`) | `birds-user.hapseemate.cn` |
+| `wechat.hapseemate.cn` | resolves at runtime | AWS ELB | app (`URLConfig.cloud` + `URLConfig.cloudStorgeWeb` — single endpoint shared between two logical services) | — |
+| `ai-voice.cloudbirds.cn` | resolves at runtime | unknown | app (voice commands) | — |
+| `public.dayunlinks.cn` | **CNAME → `birds-public.philipsiot.com` → `190.92.254.74`** | **Philips Signify IoT infrastructure** | app `/public/checkVer`, `/public/checkDevVer`, `/public/checkAdv`, `/domainname/all`, `/publicLang/getLang` (`URLConfig.version`) | `public.dayunlinks.cn` |
+| `apppush-hapseemate.dayunlinks.cn` | resolves at runtime | unknown (Philips IoT family?) | app push notifications (`URLConfig.push` + observed `/icp/getMsgVideoCall`) | — |
+| `databuried.cloudbirds.cn` | resolves at runtime | unknown | app analytics / telemetry (`URLConfig.databuried`) — obtained via `/domainname/all` decryption, not yet observed on the wire | — |
+| `support.cloudbirds.cn` | resolves at runtime | unknown | app support pages (`URLConfig.support`, HTTPS) **and** account cancellation (`URLConfig.cancellation`, plain **HTTP** — see anomaly note below) | — |
+| `privacy-policy.dayunlinks.cn` | resolves at runtime | unknown | app privacy policy page (`URLConfig.privacy`) | — |
+| **`payment.aiseebling.com`** ⚠️ | resolves at runtime | **unknown — third OEM brand surfaced** | app payment (`URLConfig.pay`) — **only place the `aiseebling.com` domain appears in the entire stack; worth chasing in a future session** | — |
+
+**Anomaly — the `cancellation` URL is plain `http://`, not `https://`.**
+The decrypted `URLConfig.cancellation` field literally starts with
+`http://support.cloudbirds.cn`, while the adjacent `URLConfig.support`
+field points at `https://support.cloudbirds.cn` (same host, different
+scheme). This is either a deliberate choice (the account-cancellation
+page is opened in an external browser where a cleartext redirect to HTTPS
+is acceptable) or an OEM copy-paste error. Either way it&rsquo;s notable:
+any party on the network path between a cancelling user and the support
+host can read the cancellation URL query parameters, which may contain a
+session token.
 
 The `Server: elb` header in the response confirms AWS ELB for the
 primary hapseemate hosts, which is notable because the rest of the
@@ -132,24 +147,44 @@ The cam did a DNS lookup for this host on some boot cycles but we never
 saw it initiate an actual TCP or UDP session to the resolved IP. Might
 be triggered by specific firmware states we haven&rsquo;t exercised.
 
-## The two brand domains
+## The brand domains
 
-This is the organizational quirk worth internalizing: the same physical
-camera, registered at the same cloud backend, uses TWO independent
-brand domains:
+As of Session 6, four brand domains are confirmed in the stack — three
+from the earlier sessions plus one surfaced by decrypting
+`/domainname/all`:
 
-1. **`cloudbirds.cn`** — used for NTP wrappers and the Kalay supernode
-   hosts (`p2p5`, `p2p6`). This is the Dayunlinks / Cloudbirds
-   public-facing brand.
+1. **`cloudbirds.cn`** — used for NTP wrappers, the Kalay supernode
+   hosts (`p2p5`, `p2p6`), analytics (`databuried`), and support
+   (`support`). The Dayunlinks / Cloudbirds public-facing brand.
 2. **`hapseemate.cn`** — used for the CBS HTTPS control plane
-   (`user.hapseemate.cn`) and keepalive (`alive.hapsee.cn`). This is
-   the HapSee app brand.
+   (`user.hapseemate.cn`, `birds-user.hapseemate.cn`,
+   `wechat.hapseemate.cn`), keepalive (`alive.hapsee.cn`), and a
+   handful of app-side utility endpoints. The HapSee app brand.
+3. **`dayunlinks.cn`** — used for the `public` bootstrap host (OTA
+   version checks, `/domainname/all` directory), push notifications
+   (`apppush-hapseemate.dayunlinks.cn`), and privacy policy
+   (`privacy-policy.dayunlinks.cn`). This is the company name behind
+   Cloudbirds.
+4. **`aiseebling.com`** — used **only** for payment
+   (`payment.aiseebling.com`). New in Session 6; not seen elsewhere in
+   the stack. The "aiseebling" branding suggests an AI/IoT sub-brand
+   or a separate OEM partner.
 
-Why two brands? Because the OEM stack is sold to multiple apps — V360
-Pro, HapSee, HapSee Mate all share the same backend. The camera&rsquo;s
-firmware was compiled with both sets of hostnames baked in so it could
-service any of the app brands. The Wi-Fi AP SSID prefix `HAP-` is an
-artifact of the HapSee heritage.
+Additionally, `public.dayunlinks.cn` CNAMEs through
+`birds-public.philipsiot.com` to Signify / Philips IoT infrastructure
+at `190.92.254.74`. That makes **Philips** a fifth entity in the
+supply chain — probably the actual hosting provider for the
+`public.dayunlinks.cn` service, which is the single most trust-critical
+endpoint in the whole stack (it emits `/domainname/all`, which
+bootstraps every other host).
+
+**Why so many brands?** Because the OEM stack is sold to multiple apps
+— V360 Pro, HapSee, HapSee Mate all share the same backend. The
+camera&rsquo;s firmware was compiled with both sets of hostnames baked
+in so it could service any of the app brands. The Wi-Fi AP SSID prefix
+`HAP-` is an artifact of the HapSee heritage. The app&rsquo;s Java
+package root `com.qianniao.*` suggests the OEM itself is Qianniao,
+operating multiple brands above a shared codebase and backend.
 
 ## What the attack needs to intercept
 
