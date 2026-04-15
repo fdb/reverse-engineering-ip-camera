@@ -1,0 +1,44 @@
+# Large binary sources ─ don't commit vendor code or its derivatives
+*.apk
+extracted/
+decompiled/
+
+# Packet captures may contain real public IPs, DIDs, and session data.
+# Exclude by default to avoid leaking PII into git history.
+*.pcap
+*.pcapng
+
+# Runtime state — MITM logs, listener logs, injection files
+/tmp/cam-listen/
+
+# Ghidra project directories
+/tmp/ghidra-cam/
+*.gpr
+*.rep/
+*.lock
+*.lock~
+
+# macOS cruft
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*~
+
+# Test cert material (regenerated at runtime)
+*.key
+*.crt
+fake-cbs-certs/
+
+# Static site build output — regenerate via `python3 build_docs.py`
+dist/
+
+# Playwright MCP test artifacts (snapshots, console logs)
+.playwright-mcp/
+site-*.png
+

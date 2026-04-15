@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>V360 Pro IP Camera — Reverse Engineering Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-deep:#0a0a0f;
+    --bg-surface:#12121a;
+    --bg-card:#1a1a26;
+    --bg-elev:#22222e;
+    --border:#2a2a3a;
+    --border-bright:#3a3a52;
+    --text:#e8e8f0;
+    --text-sec:#9898b0;
+    --text-muted:#5e5e78;
+    --orange:#fb923c;
+    --orange-500:#f97316;
+    --cyan:#22d3ee;
+    --green:#4ade80;
+    --pink:#f472b6;
+    --purple:#c084fc;
+    --yellow:#facc15;
+    --red:#f87171;
+    --kw:#c084fc;
+    --ty:#22d3ee;
+    --st:#4ade80;
+    --nb:#fb923c;
+    --cm:#5e5e78;
+    --fn:#f472b6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:'Outfit',system-ui,sans-serif;
+    background:var(--bg-deep);
+    color:var(--text);
+    overflow:hidden;
+    position:relative;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:
+      radial-gradient(ellipse at 20% 10%, rgba(251,146,60,.08), transparent 60%),
+      radial-gradient(ellipse at 85% 90%, rgba(34,211,238,.06), transparent 60%);
+  }
+  body::after{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.25;
+    background-image:
+      linear-gradient(rgba(58,58,82,.15) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(58,58,82,.15) 1px, transparent 1px);
+    background-size:44px 44px;
+  }
+
+  /* slide engine */
+  .deck{position:fixed;inset:0;z-index:1}
+  .slide{
+    position:absolute;inset:0;
+    padding:64px 72px 100px;
+    display:flex;flex-direction:column;
+    opacity:0;pointer-events:none;
+    transform:translateX(40px);
+    transition:opacity .5s ease, transform .5s ease;
+    overflow-y:auto;
+  }
+  .slide.active{opacity:1;pointer-events:auto;transform:translateX(0)}
+  .slide.prev{transform:translateX(-40px)}
+
+  .badge-counter{
+    position:fixed;top:22px;left:28px;z-index:10;
+    font-family:'JetBrains Mono',monospace;font-size:11px;
+    color:var(--text-muted);letter-spacing:.1em;text-transform:uppercase;
+  }
+  .badge-section{
+    position:fixed;top:22px;right:28px;z-index:10;
+    font-family:'JetBrains Mono',monospace;font-size:11px;
+    color:var(--orange);letter-spacing:.15em;text-transform:uppercase;
+    padding:5px 12px;border:1px solid rgba(251,146,60,.25);
+    background:rgba(251,146,60,.06);border-radius:999px;
+  }
+
+  /* nav dots */
+  .dots{
+    position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
+    z-index:10;display:flex;gap:7px;align-items:center;
+    padding:9px 14px;background:rgba(18,18,26,.7);
+    border:1px solid var(--border);border-radius:999px;backdrop-filter:blur(8px);
+  }
+  .dot{
+    width:8px;height:8px;border-radius:50%;border:none;padding:0;
+    background:var(--border-bright);cursor:pointer;transition:all .25s;
+  }
+  .dot:hover{background:var(--text-sec)}
+  .dot.active{background:var(--orange);width:22px;border-radius:4px}
+  .dot-spacer{width:1px;height:12px;background:var(--border-bright);margin:0 4px}
+
+  /* typography */
+  h1{font-size:60px;font-weight:600;line-height:1.05;letter-spacing:-.02em}
+  h2{font-size:36px;font-weight:600;letter-spacing:-.01em;margin-bottom:8px}
+  h3{font-size:20px;font-weight:600;margin-bottom:10px}
+  p{color:var(--text-sec);line-height:1.6;font-size:16px}
+  .lead{font-size:19px;color:var(--text-sec);max-width:780px;line-height:1.55}
+  .eyebrow{
+    font-family:'JetBrains Mono',monospace;font-size:11px;
+    color:var(--orange);letter-spacing:.2em;text-transform:uppercase;
+    margin-bottom:14px;
+  }
+  .mono{font-family:'JetBrains Mono',monospace}
+
+  /* cards / grids */
+  .grid{display:grid;gap:20px;margin-top:26px}
+  .grid-2{grid-template-columns:repeat(2,1fr)}
+  .grid-3{grid-template-columns:repeat(3,1fr)}
+  .grid-4{grid-template-columns:repeat(4,1fr)}
+  @media (max-width:1100px){ .grid-3,.grid-4{grid-template-columns:repeat(2,1fr)} }
+  @media (max-width:760px){ .grid-2,.grid-3,.grid-4{grid-template-columns:1fr} }
+
+  .card{
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:22px;
+    transition:transform .25s, border-color .25s, box-shadow .25s;
+  }
+  .card:hover{
+    transform:translateY(-3px);
+    border-color:var(--border-bright);
+    box-shadow:0 12px 40px rgba(251,146,60,.08);
+  }
+  .card .icon{
+    width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    background:rgba(251,146,60,.1);color:var(--orange);margin-bottom:14px;font-size:20px;
+  }
+  .card.cyan .icon{background:rgba(34,211,238,.1);color:var(--cyan)}
+  .card.green .icon{background:rgba(74,222,128,.1);color:var(--green)}
+  .card.purple .icon{background:rgba(192,132,252,.1);color:var(--purple)}
+  .card.red .icon{background:rgba(248,113,113,.12);color:var(--red)}
+  .card h3{margin-bottom:8px}
+  .card p{font-size:14px}
+  .card .meta{
+    margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);
+    font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted);
+  }
+
+  /* stagger reveal */
+  .stagger > *{opacity:0;transform:translateY(12px);transition:opacity .45s ease, transform .45s ease}
+  .slide.active .stagger > *{opacity:1;transform:translateY(0)}
+  .slide.active .stagger > *:nth-child(1){transition-delay:.05s}
+  .slide.active .stagger > *:nth-child(2){transition-delay:.12s}
+  .slide.active .stagger > *:nth-child(3){transition-delay:.19s}
+  .slide.active .stagger > *:nth-child(4){transition-delay:.26s}
+  .slide.active .stagger > *:nth-child(5){transition-delay:.33s}
+  .slide.active .stagger > *:nth-child(6){transition-delay:.40s}
+  .slide.active .stagger > *:nth-child(7){transition-delay:.47s}
+  .slide.active .stagger > *:nth-child(8){transition-delay:.54s}
+
+  /* code block */
+  .code-block{
+    background:var(--bg-surface);
+    border:1px solid var(--border);
+    border-radius:10px;
+    overflow:hidden;
+    font-family:'JetBrains Mono',monospace;
+    font-size:13px;
+  }
+  .code-header{
+    background:var(--bg-elev);padding:9px 14px;
+    border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:8px;
+    color:var(--text-muted);font-size:11px;
+  }
+  .code-dot{width:11px;height:11px;border-radius:50%}
+  .code-dot.red{background:#ff5f56}
+  .code-dot.yellow{background:#ffbd2e}
+  .code-dot.green{background:#27c93f}
+  .code-header span:last-child{margin-left:8px}
+  .code-body{padding:16px 18px;line-height:1.65;color:var(--text);overflow-x:auto;white-space:pre}
+  .kw{color:var(--kw)} .ty{color:var(--ty)} .st{color:var(--st)}
+  .nb{color:var(--nb)} .cm{color:var(--cm);font-style:italic} .fn{color:var(--fn)}
+  .pu{color:var(--text-sec)}
+
+  /* tags */
+  .tag{
+    display:inline-block;padding:3px 9px;border-radius:5px;
+    font-family:'JetBrains Mono',monospace;font-size:11px;
+    background:rgba(251,146,60,.1);color:var(--orange);
+    border:1px solid rgba(251,146,60,.25);
+    margin:2px 4px 2px 0;
+  }
+  .tag.cyan{background:rgba(34,211,238,.08);color:var(--cyan);border-color:rgba(34,211,238,.25)}
+  .tag.green{background:rgba(74,222,128,.08);color:var(--green);border-color:rgba(74,222,128,.25)}
+  .tag.red{background:rgba(248,113,113,.1);color:var(--red);border-color:rgba(248,113,113,.25)}
+  .tag.purple{background:rgba(192,132,252,.08);color:var(--purple);border-color:rgba(192,132,252,.25)}
+
+  /* title slide */
+  .title-wrap{display:flex;flex-direction:column;justify-content:center;flex:1}
+  .title-wrap h1 span.accent{
+    background:linear-gradient(120deg, var(--orange), var(--pink));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .hint{
+    margin-top:28px;padding:12px 16px;
+    background:var(--bg-card);border:1px solid var(--border);
+    border-radius:10px;display:inline-flex;gap:18px;align-items:center;
+    font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-sec);
+    max-width:max-content;
+  }
+  .kbd{
+    display:inline-block;padding:2px 7px;border-radius:4px;
+    background:var(--bg-elev);border:1px solid var(--border-bright);
+    color:var(--text);font-size:11px;
+  }
+
+  /* packet diagram */
+  .packet{
+    display:flex;border:1px solid var(--border-bright);border-radius:10px;
+    overflow:hidden;margin-top:18px;font-family:'JetBrains Mono',monospace;
+  }
+  .packet .byte{
+    flex:1;padding:14px 6px;text-align:center;
+    border-right:1px solid var(--border);
+    background:var(--bg-card);transition:all .3s;
+    position:relative;
+  }
+  .packet .byte:last-child{border-right:none}
+  .packet .byte .hx{font-size:18px;font-weight:600;color:var(--orange);display:block}
+  .packet .byte .lbl{font-size:10px;color:var(--text-muted);margin-top:6px;display:block;letter-spacing:.05em}
+  .packet .byte.magic .hx{color:var(--cyan)}
+  .packet .byte.ver .hx{color:var(--green)}
+
+  .reply-layout{
+    display:grid;grid-template-columns:repeat(8,1fr);gap:3px;margin-top:14px;
+    font-family:'JetBrains Mono',monospace;font-size:11px;
+  }
+  .reply-layout .seg{
+    padding:12px 6px;text-align:center;
+    background:var(--bg-card);border:1px solid var(--border);border-radius:6px;
+  }
+  .reply-layout .seg.hdr{background:rgba(34,211,238,.08);border-color:rgba(34,211,238,.3);color:var(--cyan)}
+  .reply-layout .seg.ip{background:rgba(251,146,60,.08);border-color:rgba(251,146,60,.3);color:var(--orange)}
+  .reply-layout .seg.mac{background:rgba(192,132,252,.08);border-color:rgba(192,132,252,.3);color:var(--purple)}
+  .reply-layout .seg.did{background:rgba(244,114,182,.08);border-color:rgba(244,114,182,.3);color:var(--pink)}
+  .reply-layout .seg.unk{color:var(--text-muted)}
+  .reply-layout .seg .range{display:block;font-size:9px;color:var(--text-muted);margin-top:3px}
+
+  /* pipeline / data flow */
+  .pipeline{
+    display:flex;align-items:center;justify-content:center;gap:0;margin-top:24px;
+    flex-wrap:nowrap;overflow-x:auto;padding:10px 0;
+  }
+  .stage{
+    min-width:150px;padding:18px 14px;background:var(--bg-card);
+    border:1px solid var(--border);border-radius:11px;text-align:center;
+    transition:all .5s;
+  }
+  .stage .step{
+    font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);
+    letter-spacing:.15em;text-transform:uppercase;
+  }
+  .stage h4{font-size:14px;margin:6px 0 4px;color:var(--text)}
+  .stage p{font-size:11px;color:var(--text-muted);line-height:1.4}
+  .stage.active{
+    border-color:var(--orange);
+    box-shadow:0 0 24px rgba(251,146,60,.25);
+    background:linear-gradient(180deg, rgba(251,146,60,.08), transparent);
+    transform:translateY(-3px);
+  }
+  .stage.active .step{color:var(--orange)}
+  .arrow{
+    width:40px;height:1px;background:var(--border-bright);position:relative;flex-shrink:0;
+    transition:background .4s;
+  }
+  .arrow::after{
+    content:"";position:absolute;right:-1px;top:-4px;
+    border-left:7px solid var(--border-bright);
+    border-top:4px solid transparent;border-bottom:4px solid transparent;
+    transition:border-left-color .4s;
+  }
+  .arrow.active{background:var(--orange)}
+  .arrow.active::after{border-left-color:var(--orange)}
+
+  .btn{
+    background:var(--orange);color:#1a0f00;border:none;
+    padding:10px 20px;border-radius:8px;font-family:'Outfit',sans-serif;
+    font-weight:600;font-size:13px;cursor:pointer;
+    transition:all .2s;
+  }
+  .btn:hover{background:#ffa352;transform:translateY(-1px);box-shadow:0 6px 20px rgba(251,146,60,.3)}
+  .btn.ghost{background:transparent;color:var(--orange);border:1px solid rgba(251,146,60,.4)}
+
+  /* lib list */
+  .libs{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:18px}
+  .lib{
+    padding:12px 14px;background:var(--bg-card);
+    border:1px solid var(--border);border-radius:9px;
+    font-family:'JetBrains Mono',monospace;font-size:12px;
+    display:flex;justify-content:space-between;align-items:center;gap:10px;
+    cursor:pointer;transition:all .2s;
+  }
+  .lib:hover{border-color:var(--border-bright);transform:translateX(2px)}
+  .lib .name{color:var(--text)}
+  .lib .role{color:var(--text-muted);font-size:10px;text-align:right}
+
+  /* mermaid container */
+  .mer{
+    margin-top:20px;padding:18px;background:var(--bg-surface);
+    border:1px solid var(--border);border-radius:12px;
+  }
+  .mer svg{max-width:100%;height:auto}
+
+  /* summary cards */
+  .keyfacts{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:22px}
+  @media (max-width:900px){ .keyfacts{grid-template-columns:1fr} .libs{grid-template-columns:1fr} }
+
+  .callout{
+    padding:14px 18px;border-left:3px solid var(--orange);
+    background:rgba(251,146,60,.05);border-radius:0 9px 9px 0;
+    margin-top:18px;font-size:14px;color:var(--text-sec);
+  }
+  .callout.red{border-left-color:var(--red);background:rgba(248,113,113,.05)}
+  .callout.green{border-left-color:var(--green);background:rgba(74,222,128,.05)}
+  .callout strong{color:var(--text)}
+
+  /* port table */
+  .ports{width:100%;border-collapse:collapse;margin-top:16px;font-size:13px}
+  .ports th,.ports td{
+    padding:10px 12px;text-align:left;
+    border-bottom:1px solid var(--border);
+  }
+  .ports th{color:var(--text-muted);font-weight:500;font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .ports td{color:var(--text-sec);font-family:'JetBrains Mono',monospace;font-size:12px}
+  .ports td:first-child{color:var(--orange)}
+  .ports td.note{font-family:'Outfit',sans-serif;color:var(--text-sec)}
+
+  .two-col{display:grid;grid-template-columns:1.1fr 1fr;gap:30px;margin-top:22px;align-items:start}
+  @media (max-width:960px){ .two-col{grid-template-columns:1fr} }
+
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-track{background:var(--bg-deep)}
+  ::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:5px}
+</style>
+</head>
+<body>
+
+<div class="badge-counter"><span id="counter">01 / 08</span></div>
+<div class="badge-section" id="section-label">Overview</div>
+
+<div class="deck" id="deck">
+
+  <!-- 1 TITLE -->
+  <section class="slide" data-section="Overview">
+    <div class="title-wrap stagger">
+      <div class="eyebrow">V360 Pro 6.5.0 · com.dayunlinks.cloudbirds</div>
+      <h1>Reversing a <span class="accent">cheap Chinese<br/>IP camera</span></h1>
+      <p class="lead" style="margin-top:22px">
+        The APK weighs 209&nbsp;MB and bundles nine <span class="mono">.dex</span> files, 40+ native libraries,
+        and half a dozen Chinese ad SDKs. Buried under all that is a straightforward local-network protocol
+        — and a cloud provisioning step that leaks your Wi-Fi credentials before the camera ever gets them.
+        This explainer walks through what we pulled out of the decompile.
+      </p>
+      <div style="display:flex;gap:8px;margin-top:22px;flex-wrap:wrap">
+        <span class="tag">apk 209 MB</span>
+        <span class="tag cyan">9 dex · 4247 java files</span>
+        <span class="tag green">libPPCS_API.so</span>
+        <span class="tag purple">CS2 Network PPPP</span>
+        <span class="tag red">cloud phone-home</span>
+      </div>
+      <div class="hint">
+        <span><span class="kbd">→</span> next</span>
+        <span><span class="kbd">←</span> back</span>
+        <span><span class="kbd">Space</span> advance</span>
+        <span>click the dots below</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 ARCHITECTURE -->
+  <section class="slide" data-section="Architecture">
+    <div class="eyebrow">Architecture map</div>
+    <h2>Where the interesting code lives</h2>
+    <p class="lead">The vendor SDK namespace is <span class="mono">com.qianniao</span>, not <span class="mono">com.dayunlinks</span>. Cloudbirds is the rebrand; Qianniao is the real OEM. Native libs carry the P2P and cloud logic.</p>
+
+    <div class="two-col">
+      <div>
+        <h3 style="margin-top:10px">Java packages</h3>
+        <div class="libs stagger">
+          <div class="lib"><span class="name">com.qianniao.add.*</span><span class="role">device discovery + pairing</span></div>
+          <div class="lib"><span class="name">com.qianniao.add.device.*</span><span class="role">UDP / multicast scanners</span></div>
+          <div class="lib"><span class="name">com.qianniao.mine.fragment.ApDirectHintFragment</span><span class="role">AP-mode join flow</span></div>
+          <div class="lib"><span class="name">com.qianniao.add.fragment.WifiScanQrcodeFragment</span><span class="role">QR-code Wi-Fi handoff</span></div>
+          <div class="lib"><span class="name">com.qianniao.base.http.HttpClient</span><span class="role">cloud REST API</span></div>
+          <div class="lib"><span class="name">com.p2p.pppp_api</span><span class="role">JNI bindings → libPPCS</span></div>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin-top:10px">Key native libraries</h3>
+        <div class="libs stagger">
+          <div class="lib"><span class="name">libPPCS_API.so</span><span class="role">CS2 P2P · UDP 8000</span></div>
+          <div class="lib"><span class="name">libCBSClient.so</span><span class="role">JSON bootstrap · STUN</span></div>
+          <div class="lib"><span class="name">libHole.so</span><span class="role">NAT hole-punching</span></div>
+          <div class="lib"><span class="name">libnms.so</span><span class="role">local device RPC</span></div>
+          <div class="lib"><span class="name">libiot.so / libsaas.so</span><span class="role">Aliyun IoT cloud</span></div>
+          <div class="lib"><span class="name">libijkplayer.so</span><span class="role">ffmpeg video player</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>Why this matters:</strong> the presence of <span class="mono">libPPCS_API.so</span> is the tell.
+      Dozens of Chinese OEM cams share this exact SDK (CS2 Network PPPP), so the local wire format below
+      is likely to work on cameras from many different brands, not just this one.
+    </div>
+  </section>
+
+  <!-- 3 PORTS -->
+  <section class="slide" data-section="Protocol">
+    <div class="eyebrow">Port map</div>
+    <h2>What&rsquo;s actually listening</h2>
+    <p class="lead">nmap only sees what the camera exposes. The phone-side listener on 8899 doesn&rsquo;t show up in any device scan — you have to read the app to find it.</p>
+
+    <table class="ports">
+      <thead><tr><th>Port</th><th>Side</th><th>Purpose</th><th class="note">Source</th></tr></thead>
+      <tbody>
+        <tr><td>udp 8000</td><td>cam</td><td>CS2 Network PPPP — P2P session, video/audio, RPC</td><td class="note">libPPCS_API.so</td></tr>
+        <tr><td>udp 3478</td><td>cloud</td><td>STUN for NAT hole-punching</td><td class="note">libCBSClient.so JSON</td></tr>
+        <tr><td>udp 18523</td><td>bcast</td><td>Active LAN discovery probe (&ldquo;YH&rdquo; 4 bytes)</td><td class="note">SearchDeviceByMulticast.kt</td></tr>
+        <tr><td>udp 8899</td><td>phone</td><td>Passive beacon listener after AP-mode join</td><td class="note">SearchDeviceByUDP.kt</td></tr>
+        <tr><td>udp 53 / 67 / 68</td><td>cam</td><td>DNS + DHCP on the cam&rsquo;s own AP</td><td class="note">nmap</td></tr>
+        <tr><td>tcp —</td><td>—</td><td>Nothing. Everything is UDP.</td><td class="note">nmap</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout green">
+      <strong>Takeaway:</strong> the absence of any TCP port isn&rsquo;t a mystery — it&rsquo;s by design. These cams lean
+      on UDP so the P2P layer can do STUN/TURN-style traversal without caring about the network topology.
+    </div>
+  </section>
+
+  <!-- 4 DISCOVERY PACKET -->
+  <section class="slide" data-section="Protocol">
+    <div class="eyebrow">Wire format · discovery probe</div>
+    <h2>The &ldquo;YH&rdquo; broadcast — only 4 bytes</h2>
+    <p class="lead">The phone blasts this tiny packet four times, 500&nbsp;ms apart, to <span class="mono">255.255.255.255:18523</span>. Any Qianniao-family camera on the subnet replies.</p>
+
+    <div class="packet stagger">
+      <div class="byte magic"><span class="hx">0x59</span><span class="lbl">'Y' magic</span></div>
+      <div class="byte magic"><span class="hx">0x48</span><span class="lbl">'H' magic</span></div>
+      <div class="byte ver"><span class="hx">0x01</span><span class="lbl">version</span></div>
+      <div class="byte ver"><span class="hx">0x01</span><span class="lbl">subtype</span></div>
+    </div>
+
+    <h3 style="margin-top:34px">Reply layout (280-byte max buffer)</h3>
+    <p style="font-size:14px">Fields are ASCII, zero-padded and trimmed. The code validates by checking bytes&nbsp;0–1 still equal <span class="mono">'Y','H'</span>, then slices at fixed offsets:</p>
+
+    <div class="reply-layout stagger" style="grid-template-columns:repeat(5,1fr)">
+      <div class="seg hdr">bytes 0–4<span class="range">header &amp; magic</span></div>
+      <div class="seg ip">bytes 4–20<span class="range">IP string · 16 B</span></div>
+      <div class="seg unk">bytes 20–84<span class="range">version / model (unparsed)</span></div>
+      <div class="seg mac">bytes 84–90<span class="range">MAC · 6 B</span></div>
+      <div class="seg did">bytes len−24 … len−4<span class="range">DID · 20 B</span></div>
+    </div>
+
+    <div class="code-block stagger" style="margin-top:22px">
+      <div class="code-header">
+        <span class="code-dot red"></span><span class="code-dot yellow"></span><span class="code-dot green"></span>
+        <span>SearchDeviceByMulticast.kt · constructor + send</span>
+      </div>
+      <div class="code-body"><span class="kw">val</span> buf = ByteBuffer.<span class="fn">allocate</span>(<span class="nb">4</span>)
+  .<span class="fn">putShort</span>(<span class="nb">18521</span>)   <span class="cm">// 0x4859 → 'Y','H' (big-endian)</span>
+  .<span class="fn">put</span>(<span class="nb">0x01</span>)       <span class="cm">// version</span>
+  .<span class="fn">put</span>(<span class="nb">0x01</span>)       <span class="cm">// subtype</span>
+
+<span class="kw">val</span> pkt = DatagramPacket(buf, buf.size, InetAddress.<span class="fn">getByName</span>(<span class="st">"255.255.255.255"</span>), <span class="nb">18523</span>)
+<span class="kw">repeat</span>(<span class="nb">4</span>) { socket.<span class="fn">send</span>(pkt); Thread.<span class="fn">sleep</span>(<span class="nb">500</span>) }</div>
+    </div>
+  </section>
+
+  <!-- 5 SETUP FLOW -->
+  <section class="slide" data-section="Flow">
+    <div class="eyebrow">Provisioning · the full dance</div>
+    <h2>How the app pairs a fresh camera</h2>
+    <p class="lead">Click <em>Animate</em> to walk through the default flow. Stage 3 is the one we want to skip — it sends your home Wi-Fi password to a server in China <strong>before</strong> the camera ever sees it.</p>
+
+    <div class="pipeline" id="pipeline">
+      <div class="stage" data-idx="0"><span class="step">step 01</span><h4>Join AP</h4><p>Phone connects to cam&rsquo;s HAP-xxxxx SSID</p></div>
+      <div class="arrow" data-idx="0"></div>
+      <div class="stage" data-idx="1"><span class="step">step 02</span><h4>Listen 8899</h4><p>Bind UDP, 8&nbsp;s timeout, wait for beacon</p></div>
+      <div class="arrow" data-idx="1"></div>
+      <div class="stage" data-idx="2"><span class="step">step 03</span><h4>getDidByToken</h4><p>POST ssid + pwd to cloud → pre-DID</p></div>
+      <div class="arrow" data-idx="2"></div>
+      <div class="stage" data-idx="3"><span class="step">step 04</span><h4>Render QR</h4><p>Encode <span class="mono">S&lt;ssid&gt;\n&lt;pwd&gt;\n</span></p></div>
+      <div class="arrow" data-idx="3"></div>
+      <div class="stage" data-idx="4"><span class="step">step 05</span><h4>Cam scans</h4><p>Cam&rsquo;s imager reads QR, joins Wi-Fi</p></div>
+      <div class="arrow" data-idx="4"></div>
+      <div class="stage" data-idx="5"><span class="step">step 06</span><h4>Bcast 18523</h4><p>Cam on LAN, answers &ldquo;YH&rdquo; probe</p></div>
+      <div class="arrow" data-idx="5"></div>
+      <div class="stage" data-idx="6"><span class="step">step 07</span><h4>PPPP login</h4><p>DevLgn frame, pwd <span class="mono">"123"</span></p></div>
+    </div>
+
+    <div style="margin-top:22px;display:flex;gap:10px">
+      <button class="btn" id="animate-btn">▶ Animate</button>
+      <button class="btn ghost" id="reset-btn">Reset</button>
+    </div>
+
+    <div class="callout red">
+      <strong>Privacy smell test:</strong> the QR-code step is cute, but by the time it renders your SSID and password have already
+      been POSTed to <span class="mono">HttpClient.api.getDidByToken(relatInfo = ssid&amp;pwd, tk = token)</span>. The camera never
+      actually needs that call — it&rsquo;s pure telemetry for the vendor cloud.
+    </div>
+  </section>
+
+  <!-- 6 SEQUENCE DIAGRAM -->
+  <section class="slide" data-section="Flow">
+    <div class="eyebrow">Sequence diagram</div>
+    <h2>Who talks to who, and in what order</h2>
+    <p class="lead">Same story as the pipeline, but with actors — makes the cloud&rsquo;s unnecessary position in the dance obvious.</p>
+
+    <div class="mer">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant P as Phone (V360 app)
+  participant C as Camera
+  participant S as Vendor Cloud
+  participant N as Supernode / STUN
+
+  U->>P: open app, pick "Add device"
+  P->>C: join HAP-xxxxx Wi-Fi AP
+  P->>P: bind UDP/8899
+  C-->>P: beacon (unsolicited UTF-8)
+  P->>S: POST getDidByToken(ssid,pwd)
+  S-->>P: PreDid list (device ID)
+  P->>P: render QR "S&lt;ssid&gt;\n&lt;pwd&gt;\n"
+  P-->>C: show QR on screen
+  C->>C: imager decodes, joins home Wi-Fi
+  P->>P: broadcast YH to 255.255.255.255:18523
+  C-->>P: reply (ip / mac / did)
+  P->>N: STUN bind (udp/3478)
+  N-->>P: p2pip, p2pport
+  P->>C: PPPP DevLgn (udp/8000, pwd "123")
+  C-->>P: H.264 video over PPPP
+      </pre>
+    </div>
+  </section>
+
+  <!-- 7 PRIVACY-PRESERVING FLOW -->
+  <section class="slide" data-section="Mitigation">
+    <div class="eyebrow">The bypass</div>
+    <h2>Privacy-preserving setup — no app needed</h2>
+    <p class="lead">Everything the camera cares about is local. The cloud round-trip is the app&rsquo;s choice, not the camera&rsquo;s requirement. Here&rsquo;s the minimal sequence that never leaves your LAN.</p>
+
+    <div class="grid grid-2 stagger">
+      <div class="card green">
+        <div class="icon">✓</div>
+        <h3>1 · Join the HAP-xxxxx AP</h3>
+        <p>SSID starts with <span class="mono">HAP-</span>, is ≥ 21 chars. No password on the AP itself — the <span class="mono">"123"</span> you&rsquo;ll find in the code is the PPPP admin password, not a Wi-Fi one.</p>
+        <div class="meta">ApDirectHintFragment.kt</div>
+      </div>
+      <div class="card cyan">
+        <div class="icon">◉</div>
+        <h3>2 · Listen locally on 8899</h3>
+        <p>Our <span class="mono">probe.py passive</span> does exactly what the app does: bind UDP/8899, wait for the cam&rsquo;s unsolicited beacon, parse its DID and current IP.</p>
+        <div class="meta">SearchDeviceByUDP.kt · probe.py</div>
+      </div>
+      <div class="card">
+        <div class="icon">✦</div>
+        <h3>3 · Generate the Wi-Fi QR yourself</h3>
+        <p>Payload is literally <span class="mono">"S" + ssid + "\n" + pwd + "\n"</span>. Any <span class="mono">qrcode</span> library produces it. No token, no cloud, no Aliyun.</p>
+        <div class="meta">WifiScanQrcodeFragment.kt:257</div>
+      </div>
+      <div class="card purple">
+        <div class="icon">⌘</div>
+        <h3>4 · Probe again on the real LAN</h3>
+        <p>Run <span class="mono">probe.py active</span>. The cam replies with the new IP. From there, PPPP login at <span class="mono">cam-ip:8000</span> with DID + <span class="mono">"123"</span>.</p>
+        <div class="meta">SearchDeviceByMulticast.kt · libPPCS_API.so</div>
+      </div>
+    </div>
+
+    <div class="callout green">
+      <strong>Net effect:</strong> the Chinese cloud never hears about your SSID, password, or device ID. You still get full local
+      video via PPPP. Outbound firewall rules can block anything else the cam tries to phone home.
+    </div>
+  </section>
+
+  <!-- 8 SUMMARY -->
+  <section class="slide" data-section="Summary">
+    <div class="eyebrow">Summary</div>
+    <h2>Key findings, in five bullets</h2>
+
+    <div class="grid grid-2 stagger">
+      <div class="card">
+        <div class="icon">①</div>
+        <h3>It&rsquo;s an OEM clone</h3>
+        <p>Dayunlinks / Cloudbirds is a skin. The real stack is Qianniao + CS2 Network PPPP, shared with dozens of other cheap cams. What works here likely works on its cousins.</p>
+      </div>
+      <div class="card cyan">
+        <div class="icon">②</div>
+        <h3>Local protocol is trivial</h3>
+        <p>Discovery is a 4-byte UDP broadcast with a &ldquo;YH&rdquo; magic. Reply layout is fixed offsets — ~50 lines of Python reproduces the entire scanner.</p>
+      </div>
+      <div class="card red">
+        <div class="icon">③</div>
+        <h3>Provisioning leaks creds</h3>
+        <p>The app POSTs your home SSID + password to the vendor cloud <em>before</em> encoding the QR. Not necessary for pairing — it&rsquo;s pure telemetry.</p>
+      </div>
+      <div class="card green">
+        <div class="icon">④</div>
+        <h3>The bypass is a 30-line script</h3>
+        <p>Listen on 8899, generate the QR with the exact string the app would have used, done. No APK required, no Google Play data-sharing agreement.</p>
+      </div>
+      <div class="card purple">
+        <div class="icon">⑤</div>
+        <h3>Next unknown: PPPP frames</h3>
+        <p>Discovery and pairing are solved. The remaining RE task is the DevLgn packet structure in <span class="mono">libPPCS_API.so</span> so we can pull raw H.264 without the app&rsquo;s player.</p>
+      </div>
+      <div class="card">
+        <div class="icon">☁</div>
+        <h3>Other phone-home vectors</h3>
+        <p>Even with a clean setup, the cam will try Aliyun IoT (<span class="mono">libiot.so</span>) and whatever <span class="mono">libCBSClient.so</span> is talking to. Block egress on the LAN side, not just on the phone.</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<nav class="dots" id="dots"></nav>
+
+<script type="module">
+  import mermaid from 'https://esm.sh/mermaid@11';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor:'#1a1a26',
+      primaryBorderColor:'#3a3a52',
+      primaryTextColor:'#e8e8f0',
+      lineColor:'#fb923c',
+      secondaryColor:'#22222e',
+      tertiaryColor:'#12121a',
+      actorBkg:'#1a1a26',
+      actorBorder:'#fb923c',
+      actorTextColor:'#e8e8f0',
+      noteBkgColor:'#22222e',
+      noteBorderColor:'#3a3a52',
+      noteTextColor:'#e8e8f0',
+      signalColor:'#9898b0',
+      signalTextColor:'#e8e8f0',
+      labelBoxBkgColor:'#22222e',
+      labelBoxBorderColor:'#3a3a52',
+      labelTextColor:'#e8e8f0'
+    }
+  });
+</script>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const dotsEl = document.getElementById('dots');
+  const counterEl = document.getElementById('counter');
+  const sectionEl = document.getElementById('section-label');
+  let current = 0;
+
+  // build dot navigation grouped by section
+  let lastSection = null;
+  slides.forEach((s, i) => {
+    const sec = s.dataset.section;
+    if (lastSection && sec !== lastSection) {
+      const sp = document.createElement('span');
+      sp.className = 'dot-spacer';
+      dotsEl.appendChild(sp);
+    }
+    const b = document.createElement('button');
+    b.className = 'dot';
+    b.title = `${i+1}. ${sec}`;
+    b.addEventListener('click', () => go(i));
+    dotsEl.appendChild(b);
+    lastSection = sec;
+  });
+  const dots = [...dotsEl.querySelectorAll('.dot')];
+
+  function go(next) {
+    if (next < 0 || next >= slides.length) return;
+    const dir = next > current ? 1 : -1;
+    slides[current].classList.remove('active');
+    slides[current].classList.toggle('prev', dir === 1);
+    current = next;
+    slides[current].classList.remove('prev');
+    slides[current].classList.add('active');
+    dots.forEach((d, i) => d.classList.toggle('active', i === current));
+    counterEl.textContent = `${String(current+1).padStart(2,'0')} / ${String(slides.length).padStart(2,'0')}`;
+    sectionEl.textContent = slides[current].dataset.section;
+  }
+
+  // init
+  slides[0].classList.add('active');
+  dots[0].classList.add('active');
+  counterEl.textContent = `01 / ${String(slides.length).padStart(2,'0')}`;
+  sectionEl.textContent = slides[0].dataset.section;
+
+  // keyboard
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); go(current+1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(current-1); }
+    else if (e.key === 'Home') { go(0); }
+    else if (e.key === 'End') { go(slides.length-1); }
+  });
+
+  // touch swipe
+  let tx = null;
+  document.addEventListener('touchstart', e => { tx = e.touches[0].clientX; }, {passive:true});
+  document.addEventListener('touchend', e => {
+    if (tx == null) return;
+    const dx = e.changedTouches[0].clientX - tx;
+    if (Math.abs(dx) > 50) go(current + (dx < 0 ? 1 : -1));
+    tx = null;
+  }, {passive:true});
+
+  // pipeline animation
+  const stages = [...document.querySelectorAll('.stage')];
+  const arrows = [...document.querySelectorAll('.arrow')];
+  const animateBtn = document.getElementById('animate-btn');
+  const resetBtn = document.getElementById('reset-btn');
+  let anim = null;
+  function resetPipe() {
+    stages.forEach(s => s.classList.remove('active'));
+    arrows.forEach(a => a.classList.remove('active'));
+    if (anim) { clearTimeout(anim); anim = null; }
+  }
+  animateBtn && animateBtn.addEventListener('click', () => {
+    resetPipe();
+    let i = 0;
+    const tick = () => {
+      if (i > 0) arrows[i-1] && arrows[i-1].classList.add('active');
+      if (i >= stages.length) return;
+      stages[i].classList.add('active');
+      i++;
+      anim = setTimeout(tick, 650);
+    };
+    tick();
+  });
+  resetBtn && resetBtn.addEventListener('click', resetPipe);
+</script>
+
+</body>
+</html>
