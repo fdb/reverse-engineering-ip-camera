@@ -8,15 +8,16 @@ and how each piece affects our attack.
 | Defense | Present? | Effective? | Our bypass |
 |---|---|---|---|
 | DNS rebinding filter | ✅ yes | 🔶 partial | Non-RFC1918 DNS override + IP-level DNAT |
-| TLS certificate pinning | ❌ no | — | None needed |
-| TLS public key pinning | ❌ no | — | None needed |
+| TLS certificate pinning (cam) | ❌ no | — | None needed |
+| TLS public key pinning (cam) | ❌ no | — | None needed |
+| **TLS trust on Android app** | ❌ **actively broken** | — | **None needed — app allow-alls every cert** |
 | Kalay body obfuscation | ✅ yes | 🔶 partial | Replay known-good packets |
 | Hardcoded supernode IP | ✅ yes | 🔶 partial | Dedicated IP-level DNAT rule |
 | Session nonce in DEV_LGN | ✅ yes | ✅ yes | Not broken — cam regenerates per session |
 | App-side telemetry | ✅ yes | ✅ yes | We don&rsquo;t run the app |
 | Pre-QR cloud check | ✅ yes | ✅ yes | We don&rsquo;t run the app |
 | Device auth in CBS | 🔶 unknown | 🔶 unknown | Obfuscated blobs in request — semantics unknown |
-| Firmware code signing | ❓ unknown | — | Not yet investigated |
+| Firmware code signing | ❓ unknown | — | Session 6 investigation in progress; Philips IoT backend suggests it&rsquo;s probably signed |
 | Rate limiting | 🔶 not observed | — | None needed so far, see note below |
 
 ## DNS rebinding filter
@@ -51,13 +52,18 @@ to public IPs. At least these are on the list:
 - `p2p6.cloudbirds.cn`
 - `alive.hapsee.cn`
 
-**Our bypass**: DNS override to a non-RFC1918 sink (we use `9.9.9.9`,
-which is real Quad9 — for production we should switch to TEST-NET-3
-`203.0.113.x`). The cam passes the filter and attempts a TCP connect
+**Our bypass**: DNS override to a non-RFC1918 sink. As of Session 6
+we use `203.0.113.37` (TEST-NET-3, RFC 5737) — a reserved
+documentation range that no real service operates on, so a DNAT miss
+drops packets into the void instead of hitting a real third party.
+Earlier sessions used `9.9.9.9` (real Quad9), which works but leaks
+DNAT-missed packets to Quad9&rsquo;s logs; see `09-router-setup.md` for
+the sink-IP rationale and `ERRATA.md` entry ERR-009 for the history
+of this change. The cam passes the filter and attempts a TCP connect
 to the sink IP. Our router (UDM) then DNAT-rewrites the destination
-to our Mac&rsquo;s LAN IP before the packet leaves the UDM. From the cam&rsquo;s
-point of view it&rsquo;s connecting to `9.9.9.9`; from the Mac&rsquo;s point of
-view the packet arrives at the local LAN.
+to our Mac&rsquo;s LAN IP before the packet leaves the UDM. From the
+cam&rsquo;s point of view it&rsquo;s connecting to `203.0.113.37`; from the
+Mac&rsquo;s point of view the packet arrives at the local LAN.
 
 **Why it&rsquo;s only partially effective**: the filter stops naive DNS
 attacks but does nothing against a router-level NAT attacker. Our
@@ -185,11 +191,11 @@ recovered on its own. We assumed it was a watchdog-style crash and
 restart (the cam was still ping-responsive the whole time), but we
 can&rsquo;t completely rule out that the cam&rsquo;s code entered some kind of
 long-interval backoff after enough anomalous packets. This is in
-[`12-open-questions.md`](12-open-questions.md) as an unresolved item.
+[`13-open-questions.md`](13-open-questions.md) as an unresolved item.
 For now we treat it as "no observed rate limiting", but mentally
 asterisked.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_
 
 ## Firmware code signing — unknown
 

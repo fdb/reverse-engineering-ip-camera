@@ -99,6 +99,11 @@ DNS.2 = hapseemate.cn
 DNS.3 = user.hapseemate.cn
 DNS.4 = *.cloudbirds.cn
 DNS.5 = *.hapsee.cn
+DNS.6 = *.dayunlinks.cn
+DNS.7 = dayunlinks.cn
+DNS.8 = *.philipsiot.com
+DNS.9 = philipsiot.com
+DNS.10 = birds-public.philipsiot.com
 """
     )
     subprocess.run(

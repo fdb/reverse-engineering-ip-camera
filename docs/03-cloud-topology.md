@@ -69,29 +69,58 @@ IP-level traffic. We have to catch it with a dedicated `iptables -d
 
 ### CBS control plane (TCP 443 TLS)
 
-| Hostname | Real IP | Frontend | SNI |
-|---|---|---|---|
-| `user.hapseemate.cn` | `190.92.254.71` | **AWS Elastic Load Balancer** | `user.hapseemate.cn` |
+| Hostname | Real IP | Frontend | Used by | SNI |
+|---|---|---|---|---|
+| `user.hapseemate.cn` | `190.92.254.71` | **AWS Elastic Load Balancer** | cam + app (legacy) | `user.hapseemate.cn` |
+| `birds-user.hapseemate.cn` | resolves at runtime | (AWS ELB, same frontend family) | app primary API base URL | `birds-user.hapseemate.cn` |
+| `wechat.hapseemate.cn` | resolves at runtime | (AWS ELB) | app WeChat-login flow | — |
+| `ai-voice.cloudbirds.cn` | resolves at runtime | (unknown) | app voice commands | — |
+| `public.dayunlinks.cn` | **CNAME → `birds-public.philipsiot.com` → `190.92.254.74`** | **Philips Signify IoT infrastructure** | app OTA version check | `public.dayunlinks.cn` |
+| `apppush-hapseemate.dayunlinks.cn` | resolves at runtime | (Philips IoT?) | app push notifications | — |
 
-The `Server: elb` header in the response confirms AWS ELB, which is
-notable because the rest of the stack is Alibaba-hosted. Chinese OEMs
-frequently put their international-facing APIs on AWS or Cloudflare to
-dodge country-based firewall rules.
+The `Server: elb` header in the response confirms AWS ELB for the
+primary hapseemate hosts, which is notable because the rest of the
+stack is Alibaba-hosted. Chinese OEMs frequently put their
+international-facing APIs on AWS or Cloudflare to dodge country-based
+firewall rules.
 
-**Cert pinning status: NONE.** The camera happily accepts our
-self-signed certificate as long as the hostname matches the SNI. This
-is the single biggest vendor security mistake in the whole stack.
+**The Philips IoT finding (Session 6)**: `public.dayunlinks.cn`
+CNAMEs through `birds-public.philipsiot.com` to Signify-operated
+infrastructure. This is the first concrete evidence that the
+OTA/update path is hosted on a Western IoT platform, not a Chinese
+cloud. It implies:
 
-**Endpoints observed so far**: only `/preadd/didBindUserId`. See
-[`05-wire-format-cbs.md`](05-wire-format-cbs.md).
+- The OTA backend is probably subject to different security and
+  uptime guarantees than `hapseemate.cn` (possibly stricter TLS,
+  possibly signed firmware manifests).
+- The OEM supply chain touches Signify/Philips in some capacity —
+  worth flagging for anyone doing broader portability work on the
+  Qianniao / Kalay / CS2 PPPP OEM family.
+
+**Cert pinning status on the cam: NONE.** The camera happily accepts
+our self-signed certificate as long as the hostname matches the SNI.
+This is one of the biggest cam-side vendor security mistakes.
+
+**TLS trust on the app (Session 6 static analysis)**: the V360 Pro
+Android app is *deliberately* insecure. Its OkHttp client uses a
+custom `X509TrustManager` whose `checkServerTrusted()` is empty, and
+a custom `HostnameVerifier` that returns `true` unconditionally — see
+`decompiled/sources/com/qianniao/base/http/HttpClient.java:71-105`.
+The app accepts any cert from any host. Also documented in
+`07-defenses.md`.
+
+**Endpoints observed on the wire from the cam so far**: only
+`/preadd/didBindUserId`. See [`05-wire-format-cbs.md`](05-wire-format-cbs.md).
 
 **Endpoints from the Android app&rsquo;s `Api.java` (not observed from the
-cam yet)** — dozens, including `/preadd/checkDidByToken`,
-`/device/addDev2.html`, `/deviceShare/v2/share.html`,
-`/drp/order/checkOrderState`, `/public/checkDevVer`, `/user/forgetpwd.html`.
+cam yet, some confirmed from app-side capture in Session 6)** —
+dozens, including `/preadd/checkDidByToken`, `/device/addDev2.html`,
+`/deviceShare/v2/share.html`, `/drp/order/checkOrderState`,
+`/public/checkDevVer`, `/public/checkVer`, `/user/forgetpwd.html`.
 Most are app-side user-management APIs the cam would never call. We
 expect the cam&rsquo;s own traffic pattern to be limited to the
-`/preadd/*` namespace plus potentially an OTA update check.
+`/preadd/*` namespace plus potentially an OTA update check routed
+through `public.dayunlinks.cn`.
 
 ### DNS-only (no traffic observed yet)
 
@@ -128,18 +157,27 @@ For a complete MITM we need to capture or override:
 
 | Domain/IP | Protocol | Our handling |
 |---|---|---|
-| `p2p5.cloudbirds.cn` | UDP 32100 Kalay | dnsmasq → 9.9.9.9 → DNAT to Mac:32100 → mitm_supernode_proxy |
+| `p2p5.cloudbirds.cn` | UDP 32100 Kalay | dnsmasq → `203.0.113.37` → DNAT to Mac:32100 → mitm_supernode_proxy |
 | `p2p6.cloudbirds.cn` | UDP 32100 Kalay | same as above |
 | `123.56.74.245` | UDP 32100 Kalay | **IP-level** DNAT to Mac:32100 (no DNS) |
-| `user.hapseemate.cn` | TCP 443 TLS | dnsmasq → 9.9.9.9 → DNAT TCP/443 to Mac:8443 → mitm_cbs_proxy |
-| `alive.hapsee.cn` | unknown | dnsmasq → 9.9.9.9 (no traffic observed yet, so nothing on Mac side) |
+| `user.hapseemate.cn` | TCP 443 TLS | dnsmasq → `203.0.113.37` → DNAT TCP/443 to Mac:8443 → mitm_cbs_proxy |
+| `public.dayunlinks.cn` | TCP 443 TLS | dnsmasq → `203.0.113.37` → DNAT TCP/443 to Mac:8443 → mitm_cbs_proxy (SNI-dispatched) |
+| `*.philipsiot.com` | TCP 443 TLS | dnsmasq → `203.0.113.37` → DNAT TCP/443 to Mac:8443 → mitm_cbs_proxy (SNI-dispatched) |
+| `alive.hapsee.cn` | unknown | dnsmasq → `203.0.113.37` (no traffic observed yet, so nothing on Mac side) |
 | NTP wrappers | UDP 123 | **Allowed through unmodified** (needed for `utcTime`) |
 
+**Note on sink IP**: earlier sessions used `9.9.9.9` (real Quad9
+DNS). Session 6 switched to `203.0.113.37` (TEST-NET-3, RFC 5737) —
+a reserved documentation range that no real service operates on,
+so a DNAT miss drops packets into the void instead of leaking to
+Quad9&rsquo;s logs. See [`09-router-setup.md`](09-router-setup.md) for
+the sink IP rationale.
+
 See [`08-attack-chain.md`](08-attack-chain.md) for the full routing
-details and [`09-mitm-setup.md`](09-mitm-setup.md) for how to actually
+details and [`09-router-setup.md`](09-router-setup.md) for how to actually
 configure it.
 
-_Last updated: 2026-04-15 — Session 5_
+_Last updated: 2026-04-15 — Session 6_
 
 ## Public IP leakage (important OPSEC note)
 
